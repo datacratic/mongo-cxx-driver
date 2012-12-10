@@ -113,11 +113,30 @@ namespace mongo {
             _version = 0;
             _operation = o;
         }
-        char _data[4];
+
+        //OLD-------
+        //char _data[4];
+        //
+        //int& dataAsInt(){
+        //  return *((int *) _data);
+        //}
+        //OLD END---
+
+        //Datacratic-------
+        union {
+            char c[4];
+            int i;
+        }uData;
+        char* _data;
+        
+        MsgData(){
+            _data = uData.c;
+        }
 
         int& dataAsInt() {
-            return *((int *) _data);
+            return uData.i;
         }
+        //Datacratic end---
 
         bool valid() {
             if ( len <= 0 || len > ( 4 * BSONObjMaxInternalSize ) )
