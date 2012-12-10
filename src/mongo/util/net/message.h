@@ -124,17 +124,12 @@ namespace mongo {
 
         //Datacratic-------
         union {
-            char c[4];
-            int i;
-        }uData;
-        char* _data;
+            char _data[4];
+            int _dataInt;
+        };
         
-        MsgData(){
-            _data = uData.c;
-        }
-
         int& dataAsInt() {
-            return uData.i;
+            return _dataInt;
         }
         //Datacratic end---
 

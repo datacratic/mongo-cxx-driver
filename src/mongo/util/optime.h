@@ -35,7 +35,11 @@ namespace mongo {
      */
 #pragma pack(4)
     class OpTime {
-        unsigned i; // ordinal comes first so we can do a single 64 bit compare on little endian
+        union{
+            unsigned i; // ordinal comes first so we can do a single 64 bit compare on little endian
+            unsigned long long iULL;
+            long long iLL;
+        };
         unsigned secs;
         static OpTime last;
         static OpTime skewed();
@@ -92,10 +96,10 @@ namespace mongo {
          bytes of overhead.
          */
         unsigned long long asDate() const {
-            return reinterpret_cast<const unsigned long long*>(&i)[0];
+            return reinterpret_cast<const unsigned long long *>(&iULL)[0];
         }
         long long asLL() const {
-            return reinterpret_cast<const long long*>(&i)[0];
+            return reinterpret_cast<const long long *>(&iLL)[0];
         }
 
         bool isNull() const { return secs == 0; }
