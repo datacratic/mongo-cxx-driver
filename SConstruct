@@ -68,7 +68,9 @@ if linux:
     env.Append(LINKFLAGS=["-Wl,--as-needed", "-Wl,-zdefs", "-pthread"])
 
 #datacratic
-env.Append(CCFLAGS=["-L" + os.getenv("LD_LIBRARY_PATH"), "-I" + os.getenv("HOME") + "/local/include/"])
+env.Append(CCFLAGS=["-L" + os.getenv("LD_LIBRARY_PATH"),
+                    "-I" + os.getenv("HOME") + "/local/include/",
+                    "-fPIC"])
 
 
 
