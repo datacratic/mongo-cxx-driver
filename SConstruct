@@ -29,7 +29,7 @@ env = Environment(BUILD_DIR='#build',
                   CLIENT_SCONSTRUCT='#SConstruct',
                   MSVS_ARCH=None,
                   PYTHON=sys.executable,
-                  LIBPATH='/home/fmlheureux/local/lib/')#datacratic
+                  LIBPATH=os.getenv('HOME') + '/local/lib/')#datacratic
 
 def addExtraLibs(s):
     for x in s.split(","):
