@@ -29,6 +29,7 @@ env = Environment(BUILD_DIR='#build',
                   CLIENT_SCONSTRUCT='#SConstruct',
                   MSVS_ARCH=None,
                   PYTHON=sys.executable,
+                  ENV = {"PATH": os.getenv('PATH')},
                   LIBPATH=os.getenv('HOME') + '/local/lib/')#datacratic
 
 def addExtraLibs(s):
@@ -68,11 +69,11 @@ if linux:
     env.Append(LINKFLAGS=["-Wl,--as-needed", "-Wl,-zdefs", "-pthread"])
 
 #datacratic
-env.Append(CCFLAGS=["-L" + os.getenv("LD_LIBRARY_PATH"),
-                    "-I" + os.getenv("HOME") + "/local/include/",
+env.Append(CCFLAGS=["-I" + os.getenv("HOME") + "/local/include/",
                     "-fPIC"])
-
-
+env.Append(LINKFLAGS=["-L%s" % x
+                        for x in os.getenv("LD_LIBRARY_PATH").split(":")
+                        if x != ""])
 
 boostLibs = ["thread", "filesystem", "system"]
 conf = Configure(env)
