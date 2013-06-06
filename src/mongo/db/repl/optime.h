@@ -39,8 +39,15 @@ namespace mongo {
      */
 #pragma pack(4)
     class OpTime {
-        unsigned i; // ordinal comes first so we can do a single 64 bit compare on little endian
-        unsigned secs;
+        union {
+            struct {
+                unsigned i; // ordinal comes first so we can do a single 64 bit compare on little endian
+                unsigned secs;
+            };
+            unsigned long long as_u64;
+            long long as_i64;
+        };
+
         static OpTime last;
         static OpTime skewed();
     public:
@@ -62,11 +69,11 @@ namespace mongo {
             return i;
         }
         OpTime(Date_t date) {
-            reinterpret_cast<unsigned long long&>(*this) = date.millis;
+            as_u64 = date.millis;
             dassert( (int)secs >= 0 );
         }
         OpTime(ReplTime x) {
-            reinterpret_cast<unsigned long long&>(*this) = x;
+            as_u64 = x;
             dassert( (int)secs >= 0 );
         }
         OpTime(unsigned a, unsigned b) {
@@ -102,10 +109,10 @@ namespace mongo {
          bytes of overhead.
          */
         unsigned long long asDate() const {
-            return reinterpret_cast<const unsigned long long*>(&i)[0];
+            return as_u64;
         }
         long long asLL() const {
-            return reinterpret_cast<const long long*>(&i)[0];
+            return as_i64;
         }
 
         bool isNull() const { return secs == 0; }
