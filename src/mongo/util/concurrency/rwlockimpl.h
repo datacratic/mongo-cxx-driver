@@ -1,5 +1,21 @@
 // @file rwlockimpl.h
 
+/**
+*    Copyright (C) 2012 10gen Inc.
+*
+*    This program is free software: you can redistribute it and/or  modify
+*    it under the terms of the GNU Affero General Public License, version 3,
+*    as published by the Free Software Foundation.
+*
+*    This program is distributed in the hope that it will be useful,
+*    but WITHOUT ANY WARRANTY; without even the implied warranty of
+*    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+*    GNU Affero General Public License for more details.
+*
+*    You should have received a copy of the GNU Affero General Public License
+*    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*/
+
 #pragma once
 
 #include "mutex.h"
@@ -8,7 +24,7 @@
 namespace mongo { 
     typedef RWLockBase1 RWLockBase;
 }
-#elif defined(MONGO_USE_SRW_ON_WINDOWS) && defined(_WIN32)
+#elif defined(NTDDI_VERSION) && defined(NTDDI_WIN7) && (NTDDI_VERSION >= NTDDI_WIN7)
 
 // windows slimreaderwriter version.  newer windows versions only
 

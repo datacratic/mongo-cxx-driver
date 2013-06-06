@@ -1,5 +1,3 @@
-// @file queryoptimizercursor.h - Interface for a cursor interleaving multiple candidate cursors.
-
 /**
  *    Copyright (C) 2011 10gen Inc.
  *
@@ -19,68 +17,12 @@
 #pragma once
 
 #include "cursor.h"
-#include "diskloc.h"
 
 namespace mongo {
     
-    class QueryPlan;
     class CandidatePlanCharacter;
-    
-    /**
-     * An interface for policies overriding the query optimizer's default query plan selection
-     * behavior.
-     */
-    class QueryPlanSelectionPolicy {
-    public:
-        virtual ~QueryPlanSelectionPolicy() {}
-        virtual string name() const = 0;
-        virtual bool permitOptimalNaturalPlan() const { return true; }
-        virtual bool permitOptimalIdPlan() const { return true; }
-        virtual bool permitPlan( const QueryPlan &plan ) const { return true; }
-        virtual BSONObj planHint( const char *ns ) const { return BSONObj(); }
-        
-        /** Allow any query plan selection, permitting the query optimizer's default behavior. */
-        static const QueryPlanSelectionPolicy &any();
-
-        /** Prevent unindexed collection scans. */
-        static const QueryPlanSelectionPolicy &indexOnly();
-
-        /**
-         * Generally hints to use the _id plan, falling back to the $natural plan.  However, the
-         * $natural plan will always be used if optimal for the query.
-         */
-        static const QueryPlanSelectionPolicy &idElseNatural();
-        
-    private:
-        class Any;
-        static Any __any;
-        class IndexOnly;
-        static IndexOnly __indexOnly;
-        class IdElseNatural;
-        static IdElseNatural __idElseNatural;
-    };
-
-    class QueryPlanSelectionPolicy::Any : public QueryPlanSelectionPolicy {
-    public:
-        virtual string name() const { return "any"; }
-    };
-    
-    class QueryPlanSelectionPolicy::IndexOnly : public QueryPlanSelectionPolicy {
-    public:
-        virtual string name() const { return "indexOnly"; }
-        virtual bool permitOptimalNaturalPlan() const { return false; }
-        virtual bool permitPlan( const QueryPlan &plan ) const;
-    };
-
-    class QueryPlanSelectionPolicy::IdElseNatural : public QueryPlanSelectionPolicy {
-    public:
-        virtual string name() const { return "idElseNatural"; }
-        virtual bool permitPlan( const QueryPlan &plan ) const;
-        virtual BSONObj planHint( const char *ns ) const;
-    };
-    
-    class FieldRangeSet;
     class ExplainQueryInfo;
+    class FieldRangeSet;
     
     /**
      * Adds functionality to Cursor for running multiple plans, running out of order plans,

@@ -18,10 +18,11 @@
 #pragma once
 
 #include "mongo/pch.h"
-#include "message.h"
-#include "message_port.h"
-#include "listen.h"
-#include "../../db/jsobj.h"
+
+#include "mongo/db/jsobj.h"
+#include "mongo/util/net/listen.h"
+#include "mongo/util/net/message.h"
+#include "mongo/util/net/message_port.h"
 
 namespace mongo {
 
@@ -46,11 +47,11 @@ namespace mongo {
 
         static string parseURL( const char * buf );
         static string parseMethod( const char * headers );
-        static string getHeader( const char * headers , string name );
+        static string getHeader( const char * headers , const std::string& name );
         static const char *body( const char *buf );
 
         static string urlDecode(const char* s);
-        static string urlDecode(string s) {return urlDecode(s.c_str());}
+        static string urlDecode(const std::string& s) {return urlDecode(s.c_str());}
 
     private:
         void accepted(boost::shared_ptr<Socket> psocket, long long connectionId );

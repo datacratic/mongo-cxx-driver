@@ -25,9 +25,10 @@
 #include <vector>
 
 #include "mongo/bson/bsonelement.h"
-#include "mongo/bson/stringdata.h"
+#include "mongo/base/string_data.h"
 #include "mongo/bson/util/atomic_int.h"
 #include "mongo/bson/util/builder.h"
+#include "mongo/util/bufreader.h"
 
 namespace mongo {
 
@@ -171,14 +172,7 @@ namespace mongo {
             @param name field to find. supports dot (".") notation to reach into embedded objects.
              for example "x.y" means "in the nested object in field x, retrieve field y"
         */
-        BSONElement getFieldDotted(const char *name) const;
-        /** @return the specified element.  element.eoo() will be true if not found.
-            @param name field to find. supports dot (".") notation to reach into embedded objects.
-             for example "x.y" means "in the nested object in field x, retrieve field y"
-        */
-        BSONElement getFieldDotted(const std::string& name) const {
-            return getFieldDotted( name.c_str() );
-        }
+        BSONElement getFieldDotted(const StringData &name) const;
 
         /** Like getFieldDotted(), but expands arrays and returns all matching objects.
          *  Turning off expandLastArray allows you to retrieve nested array objects instead of
@@ -208,11 +202,7 @@ namespace mongo {
         /** Get the field of the specified name. eoo() is true on the returned
             element if not found.
         */
-        BSONElement operator[] (const char *field) const {
-            return getField(field);
-        }
-
-        BSONElement operator[] (const std::string& field) const {
+        BSONElement operator[] (const StringData& field) const {
             return getField(field);
         }
 
@@ -224,23 +214,23 @@ namespace mongo {
         }
 
         /** @return true if field exists */
-        bool hasField( const char * name ) const { return !getField(name).eoo(); }
+        bool hasField( const StringData& name ) const { return !getField(name).eoo(); }
         /** @return true if field exists */
-        bool hasElement(const char *name) const { return hasField(name); }
+        bool hasElement(const StringData& name) const { return hasField(name); }
 
         /** @return "" if DNE or wrong type */
-        const char * getStringField(const char *name) const;
+        const char * getStringField(const StringData& name) const;
 
         /** @return subobject of the given name */
-        BSONObj getObjectField(const char *name) const;
+        BSONObj getObjectField(const StringData& name) const;
 
         /** @return INT_MIN if not present - does some type conversions */
-        int getIntField(const char *name) const;
+        int getIntField(const StringData& name) const;
 
         /** @return false if not present 
             @see BSONElement::trueValue()
          */
-        bool getBoolField(const char *name) const;
+        bool getBoolField(const StringData& name) const;
 
         /** @param pattern a BSON obj indicating a set of (un-dotted) field
          *  names.  Element values are ignored.
@@ -265,7 +255,8 @@ namespace mongo {
 
         BSONObj filterFieldsUndotted(const BSONObj &filter, bool inFilter) const;
 
-        BSONElement getFieldUsingIndexNames(const char *fieldName, const BSONObj &indexKey) const;
+        BSONElement getFieldUsingIndexNames(const StringData& fieldName,
+                                            const BSONObj &indexKey) const;
 
         /** arrays are bson objects with numeric and increasing field names
             @return true if field names are numeric and increasing
@@ -330,6 +321,14 @@ namespace mongo {
          * order as 'this', plus optionally some additional elements.
          */
         bool isPrefixOf( const BSONObj& otherObj ) const;
+
+        /**
+         * @param otherObj
+         * @return returns true if the list of field names in 'this' is a prefix
+         * of the list of field names in otherObj.  Similar to 'isPrefixOf',
+         * but ignores the field values and only looks at field names.
+         */
+        bool isFieldNamePrefixOf( const BSONObj& otherObj ) const;
 
         /** This is "shallow equality" -- ints and doubles won't match.  for a
            deep equality test use woCompare (which is slower).
@@ -412,7 +411,8 @@ namespace mongo {
             opELEM_MATCH = 0x12,
             opNEAR = 0x13,
             opWITHIN = 0x14,
-            opMAX_DISTANCE=0x15
+            opMAX_DISTANCE = 0x15,
+            opGEO_INTERSECTS = 0x16,
         };
 
         /** add all elements of the object to the specified vector */
@@ -457,6 +457,8 @@ namespace mongo {
             b.appendBuf(reinterpret_cast<const void *>( objdata() ), objsize());
         }
 
+        template<typename T> bool coerceVector( std::vector<T>* out ) const;
+
 #pragma pack(1)
         class Holder : boost::noncopyable {
         private:
@@ -495,6 +497,19 @@ namespace mongo {
             _holder = rRHS._holder;
         }
         return *this;
+    }
+
+    /// members for Sorter
+    struct SorterDeserializeSettings {}; // unused
+    void serializeForSorter(BufBuilder& buf) const { buf.appendBuf(objdata(), objsize()); }
+    static BSONObj deserializeForSorter(BufReader& buf, const SorterDeserializeSettings&) {
+        const int size = buf.peek<int>();
+        const void* ptr = buf.skip(size);
+        return BSONObj(static_cast<const char*>(ptr));
+    }
+    int memUsageForSorter() const {
+        // TODO consider ownedness?
+        return sizeof(BSONObj) + objsize();
     }
 
     private:

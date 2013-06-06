@@ -19,33 +19,34 @@
 #include "mongo/db/diskloc.h"
 #include "mongo/db/index.h"
 #include "mongo/db/jsobj.h"
+#include "mongo/platform/cstdint.h"
 
 namespace mongo {
     class NamespaceDetails;
     class Record;
 
     // unindex all keys in index for this record. 
-    void unindexRecord(NamespaceDetails *d, Record *todelete, const DiskLoc& dl, bool noWarn = false);
+    void unindexRecord(NamespaceDetails *d, Record *todelete, const DiskLoc& dl,
+                       bool noWarn = false);
 
     // Build an index in the foreground
     // If background is false, uses fast index builder
     // If background is true, uses background index builder; blocks until done.
-    void buildAnIndex(string ns, NamespaceDetails *d, IndexDetails& idx, int idxNo, bool background);
+    void buildAnIndex(const std::string& ns,
+                      NamespaceDetails *d,
+                      IndexDetails& idx,
+                      bool mayInterrupt);
 
     // add index keys for a newly inserted record 
-    // done in two steps/phases to allow potential deferal of write lock portion in the future
-    void indexRecordUsingTwoSteps(const char *ns, NamespaceDetails *d, BSONObj obj,
-                                         DiskLoc loc, bool shouldBeUnlocked);
+    void indexRecord(const char *ns, NamespaceDetails *d, const BSONObj& obj, const DiskLoc &loc);
 
-    // Given an object, populate "inserter" with information necessary to update indexes.
-    void fetchIndexInserters(BSONObjSet & /*out*/keys,
-                             IndexInterface::IndexInserter &inserter,
-                             NamespaceDetails *d,
-                             int idxNo,
-                             const BSONObj& obj,
-                             DiskLoc recordLoc,
-                             const bool allowDups = false);
+    bool dropIndexes(NamespaceDetails *d, const char *ns, const char *name, string &errmsg,
+                     BSONObjBuilder &anObjBuilder, bool maydeleteIdIndex );
 
-    bool dropIndexes( NamespaceDetails *d, const char *ns, const char *name, string &errmsg, BSONObjBuilder &anObjBuilder, bool maydeleteIdIndex );
+    /**
+     * Add an _id index to namespace @param 'ns' if not already present.
+     * @param mayInterrupt When true, killop may interrupt the function call.
+     */
+    void ensureHaveIdIndex(const char* ns, bool mayInterrupt);
 
-}
+} // namespace mongo

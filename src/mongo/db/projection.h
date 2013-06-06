@@ -18,13 +18,11 @@
 #pragma once
 
 #include "mongo/pch.h"
-#include "jsobj.h"
+#include "mongo/util/string_map.h"
+#include "mongo/db/jsobj.h"
+#include "mongo/db/matcher.h"
 
 namespace mongo {
-
-    // fwd decls
-    class Matcher;
-    class MatchDetails;
 
     /**
      * given a document and a projection specification
@@ -140,7 +138,7 @@ namespace mongo {
         bool _special; // true if this level can't be skipped or included without recursing
 
         //TODO: benchmark vector<pair> vs map
-        typedef map<string, boost::shared_ptr<Projection> > FieldMap;
+        typedef StringMap<boost::shared_ptr<Projection> > FieldMap;
         FieldMap _fields;
         BSONObj _source;
         bool _includeID;
@@ -150,7 +148,7 @@ namespace mongo {
         int _limit;
 
         // used for $elemMatch and positional operator ($)
-        typedef map<string, shared_ptr<Matcher> > Matchers;
+        typedef StringMap<boost::shared_ptr<Matcher> > Matchers;
         Matchers _matchers;
         ArrayOpType _arrayOpType;
 

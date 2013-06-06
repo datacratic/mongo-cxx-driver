@@ -30,7 +30,7 @@ env = Environment(BUILD_DIR='#build',
                   MSVS_ARCH=None,
                   PYTHON=sys.executable,
                   ENV = {"PATH": os.getenv('PATH')},
-                  LIBPATH=os.getenv('HOME') + '/local/lib/')#datacratic
+                  LIBPATH=os.getenv('HOME') + '/local/lib/') #datacratic
 
 def addExtraLibs(s):
     for x in s.split(","):
@@ -82,6 +82,10 @@ for lib in boostLibs:
                          language="C++"):
         if not win:
             Exit(1)
+
+env['MONGO_BUILD_SASL_CLIENT'] = conf.CheckLibWithHeader(
+    "sasl2", "sasl/sasl.h", "C", "sasl_version_info(0, 0, 0, 0, 0, 0);", autoadd=False)
+
 conf.Finish()
 
 clientEnv = env.Clone()

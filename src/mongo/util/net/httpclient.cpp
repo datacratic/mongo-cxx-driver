@@ -15,13 +15,16 @@
  *    limitations under the License.
  */
 
-#include "pch.h"
-#include "httpclient.h"
-#include "sock.h"
-#include "message.h"
-#include "message_port.h"
-#include "../mongoutils/str.h"
-#include "../../bson/util/builder.h"
+#include "mongo/pch.h"
+
+#include "mongo/util/net/httpclient.h"
+
+#include "mongo/bson/util/builder.h"
+#include "mongo/util/mongoutils/str.h"
+#include "mongo/util/net/message.h"
+#include "mongo/util/net/message_port.h"
+#include "mongo/util/net/sock.h"
+#include "mongo/util/net/ssl_manager.h"
 
 namespace mongo {
 
@@ -29,11 +32,11 @@ namespace mongo {
 #define HD(x)
 
 
-    int HttpClient::get( string url , Result * result ) {
+    int HttpClient::get( const std::string& url , Result * result ) {
         return _go( "GET" , url , 0 , result );
     }
 
-    int HttpClient::post( string url , string data , Result * result ) {
+    int HttpClient::post( const std::string& url , const std::string& data , Result * result ) {
         return _go( "POST" , url , data.c_str() , result );
     }
 
@@ -102,8 +105,10 @@ namespace mongo {
         
         if ( ssl ) {
 #ifdef MONGO_SSL
-            _checkSSLManager();
-            sock.secure( _sslManager.get() );
+            // pointer to global singleton instance
+            SSLManagerInterface* mgr = getSSLManager();
+
+            sock.secure(mgr);
 #else
             uasserted( 15862 , "no ssl support" );
 #endif
@@ -168,11 +173,5 @@ namespace mongo {
 
         _body = entire;
     }
-
-#ifdef MONGO_SSL
-    void HttpClient::_checkSSLManager() {
-        _sslManager.reset( new SSLManager( true ) );
-    }
-#endif
 
 }

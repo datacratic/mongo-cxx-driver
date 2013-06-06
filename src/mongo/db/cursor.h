@@ -18,9 +18,10 @@
 
 #include "mongo/pch.h"
 
-#include "jsobj.h"
-#include "diskloc.h"
-#include "matcher.h"
+#include "mongo/db/diskloc.h"
+#include "mongo/db/jsobj.h"
+#include "mongo/db/matcher.h"
+#include "mongo/db/matcher_covered.h"
 #include "mongo/db/projection.h"
 
 namespace mongo {
@@ -186,8 +187,6 @@ namespace mongo {
 
         // Used when we want fast matcher lookup
         virtual CoveredIndexMatcher *matcher() const { return 0; }
-        // Used when we need to share this matcher with someone else
-        virtual shared_ptr< CoveredIndexMatcher > matcherPtr() const { return shared_ptr< CoveredIndexMatcher >(); }
 
         virtual bool currentMatches( MatchDetails *details = 0 ) {
             return !matcher() || matcher()->matchesCurrent( this, details );
@@ -264,7 +263,6 @@ namespace mongo {
         virtual bool supportGetMore() { return true; }
         virtual bool supportYields() { return true; }
         virtual CoveredIndexMatcher *matcher() const { return _matcher.get(); }
-        virtual shared_ptr< CoveredIndexMatcher > matcherPtr() const { return _matcher; }
         virtual void setMatcher( shared_ptr< CoveredIndexMatcher > matcher ) { _matcher = matcher; }
         virtual const Projection::KeyOnly *keyFieldsOnly() const { return _keyFieldsOnly.get(); }
         virtual void setKeyFieldsOnly( const shared_ptr<Projection::KeyOnly> &keyFieldsOnly ) {

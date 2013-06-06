@@ -17,11 +17,16 @@
 
 #pragma once
 
-#include "sock.h"
-#include "../../bson/util/atomic_int.h"
-#include "hostandport.h"
+#include "mongo/bson/util/atomic_int.h"
+#include "mongo/util/net/hostandport.h"
+#include "mongo/util/net/sock.h"
 
 namespace mongo {
+
+    /**
+     * Maximum accepted message size on the wire protocol.
+     */
+    const int MaxMessageSizeBytes = 48 * 1000 * 1000;
 
     class Message;
     class MessagingPort;
@@ -91,7 +96,7 @@ namespace mongo {
         int messageLength; // total message size, including this
         int requestID;     // identifier for this message
         int responseTo;    // requestID from the original request
-        //   (used in reponses from db)
+        //   (used in responses from db)
         int opCode;
     };
 #pragma pack()

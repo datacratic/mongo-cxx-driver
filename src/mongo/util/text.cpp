@@ -17,13 +17,16 @@
 
 #include "pch.h"
 
-#include "mongo/util/text.h"
-#include "mongo/util/mongoutils/str.h"
 #include <boost/smart_ptr/scoped_array.hpp>
+#include <sstream>
 
 #ifdef _WIN32
 #include <io.h>
 #endif
+
+#include "mongo/platform/basic.h"
+#include "mongo/util/mongoutils/str.h"
+#include "mongo/util/text.h"
 
 using namespace std;
 
@@ -60,7 +63,7 @@ namespace mongo {
         return l;
     }
 
-    string StringSplitter::join( vector<string>& l , const string& split ) {
+    string StringSplitter::join( const vector<string>& l , const string& split ) {
         stringstream ss;
         for ( unsigned i=0; i<l.size(); i++ ) {
             if ( i > 0 )
@@ -99,7 +102,7 @@ namespace mongo {
 
     }
 
-    bool isValidUTF8(string s) { 
+    bool isValidUTF8(const std::string& s) { 
         return isValidUTF8(s.c_str()); 
     }
 
@@ -273,30 +276,108 @@ namespace mongo {
         return true;
     }
 
-    WindowsCommandLine::WindowsCommandLine( int argc, wchar_t* argvW[] ) {
-        vector < string >   utf8args;
-        vector < size_t >   utf8argLength;
-        size_t blockSize = argc * sizeof( char * );
+    WindowsCommandLine::WindowsCommandLine(int argc, wchar_t* argvW[], wchar_t* envpW[]) :
+            _argv(NULL), _envp(NULL) {
+
+        // Construct UTF-8 copy of arguments
+        vector<string> utf8args;
+        vector<size_t> utf8argLength;
+        size_t blockSize = argc * sizeof(char*);
         size_t blockPtr = blockSize;
-        for ( int i = 0; i < argc; ++i ) {
-            utf8args.push_back( toUtf8String( argvW[ i ] ) );
-            size_t argLength = utf8args[ i ].length() + 1;
-            utf8argLength.push_back( argLength );
+        for (int i = 0; i < argc; ++i) {
+            utf8args.push_back( toUtf8String(argvW[i]) );
+            size_t argLength = utf8args[i].length() + 1;
+            utf8argLength.push_back(argLength);
             blockSize += argLength;
         }
-        _argv = reinterpret_cast< char** >( malloc( blockSize ) );
-        for ( int i = 0; i < argc; ++i ) {
-            _argv[ i ] = reinterpret_cast< char * >( _argv ) + blockPtr;
-            strcpy_s( _argv[ i ], utf8argLength[ i ], utf8args[ i ].c_str() );
-            blockPtr += utf8argLength[ i ];
+        _argv = static_cast<char**>(malloc(blockSize));
+        for (int i = 0; i < argc; ++i) {
+            _argv[i] = reinterpret_cast<char*>(_argv) + blockPtr;
+            strcpy_s(_argv[i], utf8argLength[i], utf8args[i].c_str());
+            blockPtr += utf8argLength[i];
         }
+
+        // Construct UTF-8 copy of environment strings
+        size_t envCount = 0;
+        wchar_t** envpWptr = &envpW[0];
+        while (*envpWptr++) {
+            ++envCount;
+        }
+        vector<string> utf8envs;
+        vector<size_t> utf8envLength;
+        blockSize = (envCount + 1) * sizeof(char*);
+        blockPtr = blockSize;
+        for (size_t i = 0; i < envCount; ++i) {
+            utf8envs.push_back( toUtf8String(envpW[i]) );
+            size_t envLength = utf8envs[i].length() + 1;
+            utf8envLength.push_back(envLength);
+            blockSize += envLength;
+        }
+        _envp = static_cast<char**>(malloc(blockSize));
+        size_t i;
+        for (i = 0; i < envCount; ++i) {
+            _envp[i] = reinterpret_cast<char*>(_envp) + blockPtr;
+            strcpy_s(_envp[i], utf8envLength[i], utf8envs[i].c_str());
+            blockPtr += utf8envLength[i];
+        }
+        _envp[i] = NULL;
     }
 
     WindowsCommandLine::~WindowsCommandLine() {
-        free( _argv );
+        free(_argv);
+        free(_envp);
     }
 
 #endif // #if defined(_WIN32)
 
+    // See "Parsing C++ Command-Line Arguments (C++)"
+    // http://msdn.microsoft.com/en-us/library/windows/desktop/17w5ykft(v=vs.85).aspx
+    static void quoteForWindowsCommandLine(const std::string& arg, std::ostream& os) {
+        if (arg.empty()) {
+            os << "\"\"";
+        }
+        else if (arg.find_first_of(" \t\"") == std::string::npos) {
+            os << arg;
+        }
+        else {
+            os << '"';
+            std::string backslashes = "";
+            for (std::string::const_iterator iter = arg.begin(), end = arg.end();
+                 iter != end; ++iter) {
+
+                switch (*iter) {
+                case '\\':
+                    backslashes.push_back(*iter);
+                    if (iter + 1 == end)
+                        os << backslashes << backslashes;
+                    break;
+                case '"':
+                    os << backslashes << backslashes << "\\\"";
+                    break;
+                default:
+                    os << backslashes << *iter;
+                    backslashes.clear();
+                    break;
+                }
+            }
+            os << '"';
+        }
+    }
+
+    std::string constructUtf8WindowsCommandLine(const std::vector<std::string>& argv) {
+        if (argv.empty())
+            return "";
+
+        std::ostringstream commandLine;
+        std::vector<std::string>::const_iterator iter = argv.begin();
+        std::vector<std::string>::const_iterator end = argv.end();
+        quoteForWindowsCommandLine(*iter, commandLine);
+        ++iter;
+        for (; iter != end; ++iter) {
+            commandLine << ' ';
+            quoteForWindowsCommandLine(*iter, commandLine);
+        }
+        return commandLine.str();
+    }
 }
 

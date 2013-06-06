@@ -22,7 +22,7 @@
 #include "mongo/db/client.h"
 #include "mongo/db/dur.h"
 #include "mongo/db/jsobj.h"
-#include "mongo/db/oplog.h"
+#include "mongo/db/repl/sync.h"
 #include "mongo/util/concurrency/thread_pool.h"
 
 namespace mongo {
@@ -45,7 +45,7 @@ namespace replset {
          * batching, this may end up applying ops beyond minValidObj's ts.
          *
          * @param applyGTEObj the op to start replicating at.  This is actually not used except in
-         *                    comparision to minValidObj: the background sync thread keeps its own
+         *                    comparison to minValidObj: the background sync thread keeps its own
          *                    record of where we're synced to and starts providing ops from that
          *                    point.
          * @param minValidObj the op to finish syncing at.  This function cannot return (other than

@@ -20,22 +20,24 @@
 
 #pragma once
 
-#include "indexkey.h"
-#include "queryutil.h"
-#include "projection.h"
+#include "mongo/db/diskloc.h"
+#include "mongo/db/projection.h"
+#include "mongo/db/queryutil.h"
 
 namespace mongo {
+
+    class ParsedQuery;
 
     static const int ScanAndOrderMemoryLimitExceededAssertionCode = 10128;
 
     class KeyType : boost::noncopyable {
     public:
-        IndexSpec _spec;
+        BSONObj _keyPattern;
         FieldRangeVector _keyCutter;
     public:
-        KeyType(const BSONObj &pattern, const FieldRangeSet &frs):
-        _spec((verify(!pattern.isEmpty()),pattern)),
-        _keyCutter(frs, _spec, 1) {
+        KeyType(const BSONObj &pattern, const FieldRangeSet &frs)
+            : _keyPattern(pattern), _keyCutter(frs, pattern, 1) {
+            verify(!pattern.isEmpty());
         }
 
         /**
