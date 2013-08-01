@@ -94,7 +94,7 @@ clientEnv['CPPDEFINES'].remove('MONGO_EXPOSE_MACROS')
 Export("env clientEnv")
 env.SConscript('src/SConscript.client', variant_dir='$BUILD_DIR', duplicate=False)
 
-mongoclient = env.Alias('mongoclient', ['${LIBPREFIX}mongoclient${LIBSUFFIX}'])
+mongoclient = env.Alias('mongoclient', ['${LIBPREFIX}mongoclient${LIBSUFFIX}' '${SHLIBPREFIX}mongoclient${SHLIBSUFFIX}'])
 env.Default(mongoclient)
 
 

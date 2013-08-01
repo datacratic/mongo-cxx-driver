@@ -36,7 +36,7 @@ clientSourceBasic = [
     'mongo/client/dbclient.cpp',
     'mongo/client/dbclient_rs.cpp',
     'mongo/client/dbclientcursor.cpp',
-    'mongo/client/distlock.cpp',
+#    'mongo/client/distlock.cpp',
     'mongo/client/gridfs.cpp',
     'mongo/client/model.cpp',
     'mongo/client/sasl_client_authenticate.cpp',
@@ -83,7 +83,7 @@ clientSourceBasic = [
     'mongo/util/timer.cpp',
     'mongo/util/trace.cpp',
     'mongo/util/util.cpp',
-    'mongo/util/version.cpp',
+#    'mongo/util/version.cpp',
     'third_party/murmurhash3/MurmurHash3.cpp',
     ]
 
@@ -129,6 +129,7 @@ clientHeaderDirectories = [
     "" 
     ]
 
+
 clientHeaders = []
 for path in clientHeaderDirectories:
     clientHeaders.extend(Glob('mongo/%s/*.h' % path))
@@ -137,7 +138,7 @@ for path in clientHeaderDirectories:
 mongoclient_lib = env.Library('mongoclient', clientSource),
 mongoclient_install = env.Install('#/', [
         mongoclient_lib,
-        #env.SharedLibrary('mongoclient', clientSource),
+        env.SharedLibrary('mongoclient', clientSource),
         ])
 env.Alias('mongoclient', mongoclient_install)
 
@@ -179,6 +180,7 @@ env.Install(
 prefix = GetOption("prefix")
 
 env.Install(prefix + "/lib", '${LIBPREFIX}mongoclient${LIBSUFFIX}')
+env.Install(prefix + "/lib", '${SHLIBPREFIX}mongoclient${SHLIBSUFFIX}')
 
 for x in clientHeaderDirectories:
     inst = env.Install(prefix + "/include/mongo/" + x,
