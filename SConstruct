@@ -71,7 +71,9 @@ if linux:
 #datacratic
 env.Append(CCFLAGS=["-I" + os.getenv("TARGET") + "/include/",
                     "-fPIC"])
-env.Append(LINKFLAGS=["-L" + os.getenv("TARGET") + "/lib/",])
+env.Append(LINKFLAGS=["-L%s" % x
+                      for x in os.getenv("LD_LIBRARY_PATH").split(":")
+                      if x != ""])
 
 boostLibs = ["thread", "filesystem", "system"]
 conf = Configure(env)
