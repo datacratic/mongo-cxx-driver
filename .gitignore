@@ -15,3 +15,7 @@
 
 config.log
 
+# Build related
+build/
+.sconf_temp/
+.sconsign.dblite
