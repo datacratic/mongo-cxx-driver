@@ -83,8 +83,11 @@ for lib in boostLibs:
         if not win:
             Exit(1)
 
-env['MONGO_BUILD_SASL_CLIENT'] = conf.CheckLibWithHeader(
-    "sasl2", "sasl/sasl.h", "C", "sasl_version_info(0, 0, 0, 0, 0, 0);", autoadd=False)
+
+# datacratic - check is returning true but still fails to link.
+env['MONGO_BUILD_SASL_CLIENT'] = False
+#env['MONGO_BUILD_SASL_CLIENT'] = conf.CheckLibWithHeader(
+#    "sasl2", "sasl/sasl.h", "C", "sasl_version_info(0, 0, 0, 0, 0, 0);", autoadd=False)
 
 conf.Finish()
 
