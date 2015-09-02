@@ -17,9 +17,12 @@
 
 #pragma once
 
+#include "boost/scoped_array.hpp"
+
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/client/dbclientinterface.h"
+#include "mongo/client/export_macros.h"
 
 namespace mongo {
 
@@ -27,8 +30,9 @@ namespace mongo {
 
     class GridFS;
     class GridFile;
+    class GridFileBuilder;
 
-    class GridFSChunk {
+    class MONGO_CLIENT_API GridFSChunk {
     public:
         GridFSChunk( BSONObj data );
         GridFSChunk( BSONObj fileId , int chunkNumber , const char * data , int len );
@@ -53,14 +57,14 @@ namespace mongo {
       GridFS is for storing large file-style objects in MongoDB.
       @see http://dochub.mongodb.org/core/gridfsspec
      */
-    class GridFS {
+    class MONGO_CLIENT_API GridFS {
     public:
         /**
          * @param client - db connection
          * @param dbName - root database name
          * @param prefix - if you want your data somewhere besides <dbname>.fs
          */
-        GridFS( DBClientBase& client , const string& dbName , const string& prefix="fs" );
+        GridFS( DBClientBase& client , const std::string& dbName , const std::string& prefix="fs" );
         ~GridFS();
 
         /**
@@ -79,65 +83,69 @@ namespace mongo {
          *                    (default is to omit)
          * @return the file object
          */
-        BSONObj storeFile( const string& fileName , const string& remoteName="" , const string& contentType="");
+        BSONObj storeFile( const std::string& fileName , const std::string& remoteName="" , const std::string& contentType="");
 
         /**
          * puts the file represented by data into the db
          * @param data pointer to buffer to store in GridFS
          * @param length length of buffer
-         * @param remoteName optional filename to use for file stored in GridFS
-         *                   (default is to use fileName parameter)
+         * @param remoteName filename to use for file stored in GridFS
          * @param contentType optional MIME type for this object.
          *                    (default is to omit)
          * @return the file object
          */
-        BSONObj storeFile( const char* data , size_t length , const string& remoteName , const string& contentType="");
+        BSONObj storeFile( const char* data , size_t length , const std::string& remoteName , const std::string& contentType="");
 
         /**
          * removes file referenced by fileName from the db
          * @param fileName filename (in GridFS) of the file to remove
          * @return the file object
          */
-        void removeFile( const string& fileName );
+        void removeFile( const std::string& fileName );
 
         /**
          * returns a file object matching the query
          */
-        GridFile findFile( BSONObj query ) const;
+        GridFile findFile( Query query ) const;
 
         /**
          * equiv to findFile( { filename : filename } )
          */
-        GridFile findFile( const string& fileName ) const;
+        GridFile findFileByName( const std::string& fileName ) const;
 
         /**
          * convenience method to get all the files
          */
-        auto_ptr<DBClientCursor> list() const;
+        std::auto_ptr<DBClientCursor> list() const;
 
         /**
          * convenience method to get all the files with a filter
          */
-        auto_ptr<DBClientCursor> list( BSONObj query ) const;
+        std::auto_ptr<DBClientCursor> list( BSONObj query ) const;
 
     private:
         DBClientBase& _client;
-        string _dbName;
-        string _prefix;
-        string _filesNS;
-        string _chunksNS;
+        std::string _dbName;
+        std::string _prefix;
+        std::string _filesNS;
+        std::string _chunksNS;
         unsigned int _chunkSize;
 
         // insert fileobject. All chunks must be in DB.
-        BSONObj insertFile(const string& name, const OID& id, gridfs_offset length, const string& contentType);
+        BSONObj insertFile(const std::string& name, const OID& id, gridfs_offset length, const std::string& contentType);
+
+        // Insert a chunk into DB, this method is intended to be used by
+        // GridFileBuilder to incrementally insert chunks
+        void _insertChunk(const GridFSChunk& chunk);
 
         friend class GridFile;
+        friend class GridFileBuilder;
     };
 
     /**
        wrapper for a file stored in the Mongo database
      */
-    class GridFile {
+    class MONGO_CLIENT_API GridFile {
     public:
         /**
          * @return whether or not this file exists
@@ -147,7 +155,7 @@ namespace mongo {
             return ! _obj.isEmpty();
         }
 
-        string getFilename() const {
+        std::string getFilename() const {
             return _obj["filename"].str();
         }
 
@@ -159,7 +167,7 @@ namespace mongo {
             return (gridfs_offset)(_obj["length"].number());
         }
 
-        string getContentType() const {
+        std::string getContentType() const {
             return _obj["contentType"].valuestr();
         }
 
@@ -167,11 +175,11 @@ namespace mongo {
             return _obj["uploadDate"].date();
         }
 
-        string getMD5() const {
+        std::string getMD5() const {
             return _obj["md5"].str();
         }
 
-        BSONElement getFileField( const string& name ) const {
+        BSONElement getFileField( const std::string& name ) const {
             return _obj[name];
         }
 
@@ -186,12 +194,12 @@ namespace mongo {
         /**
            write the file to the output stream
          */
-        gridfs_offset write( ostream & out ) const;
+        gridfs_offset write( std::ostream & out ) const;
 
         /**
            write the file to this filename
          */
-        gridfs_offset write( const string& where ) const;
+        gridfs_offset write( const std::string& where ) const;
 
     private:
         GridFile(const GridFS * grid , BSONObj obj );
@@ -203,4 +211,54 @@ namespace mongo {
 
         friend class GridFS;
     };
+    
+    /**
+     * class which allow to build GridFiles in a stream fashion way
+     */
+    class MONGO_CLIENT_API GridFileBuilder {
+    public:
+        /**
+         * @param grid - gridfs instance
+         */
+        GridFileBuilder( GridFS* const grid );
+        
+        /**
+         * Appends a chunk of data. Data will be split as many times as
+         * necessary in chunkSize blocks. Sizes not multiple of chunkSize will
+         * copy the reamining bytes to a pendingData pointer. In this way,
+         * it is possible to add data in a stream fashion way.
+         * @param data - C string with data
+         * @param length - size of the string
+         */
+        void appendChunk( const char* data, size_t length );
+
+        /**
+         * Inserts the description of the file in GridFS collection. Note that
+         * the stream will be reinitialized after the build call, so it will be
+         * possible to continue appending data to build another file.
+         * @param remoteName filename to use for file stored in GridFS
+         * @param contentType optional MIME type for this object.
+         *                    (default is to omit)
+         * @return the file object
+         */
+        mongo::BSONObj buildFile( const std::string& remoteName,
+                                  const std::string& contentType="" );
+        
+    private:
+        GridFS* const _grid;
+        const size_t _chunkSize; // taken from GridFS in the constructor
+        unsigned int _currentChunk;
+        OID _fileId;
+        BSONObj _fileIdObj;
+        boost::scoped_array<char> _pendingData; // pointer with _chunkSize space
+        size_t _pendingDataSize;
+        gridfs_offset _fileLength;
+
+        const char* _appendChunk( const char* data, size_t length,
+                                  bool forcePendingInsert );
+
+        void _appendPendingData();
+    };
+
+
 }

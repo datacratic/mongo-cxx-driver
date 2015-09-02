@@ -24,6 +24,29 @@ namespace mongo {
     Initializer::Initializer() {}
     Initializer::~Initializer() {}
 
+/* This array of function pointers is necessary to force inclusion of
+ * translation units with global initializers when linking against a static
+ * archive version of the client.  In their absence, the related code may
+ * resolve no symbols in a potential output binary, failing to pull in the
+ * initializers and leaving the client in a broken state.
+ *
+ * Working around this with --whole-archive or an equivalent is painful where
+ * possible and renders the static archive useless where not possible (on
+ * windows).
+ *
+ * Sorry for the hack...
+ */
+#define INSTALL_FUNCTION(NAME) void _mongoInitializerFunctionAssure_##NAME();
+#include "mongo/base/initializer_functions.h"
+#undef INSTALL_FUNCTION
+
+    void (* _mongoGlobalInitializers [])() = {
+#define INSTALL_FUNCTION(NAME) &(_mongoInitializerFunctionAssure_##NAME),
+#include "mongo/base/initializer_functions.h"
+#undef INSTALL_FUNCTION
+    NULL
+    };
+
     Status Initializer::execute(const InitializerContext::ArgumentVector& args,
                                 const InitializerContext::EnvironmentMap& env) const {
 
@@ -32,7 +55,7 @@ namespace mongo {
         if (Status::OK() != status)
             return status;
 
-        InitializerContext context(args, env, &_configVariables);
+        InitializerContext context(args, env);
 
         for (size_t i = 0; i < sortedNodes.size(); ++i) {
             InitializerFunction fn = _graph.getInitializerFunction(sortedNodes[i]);
@@ -55,21 +78,10 @@ namespace mongo {
 
     Status runGlobalInitializers(const InitializerContext::ArgumentVector& args,
                                  const InitializerContext::EnvironmentMap& env) {
-
         return getGlobalInitializer().execute(args, env);
     }
 
-    void runGlobalInitializersOrDie(const InitializerContext::ArgumentVector& args,
-                                    const InitializerContext::EnvironmentMap& env) {
-
-        Status status =  runGlobalInitializers(args, env);
-        if (Status::OK() != status) {
-            std::cerr << "Failed global initialization: " << status << std::endl;
-            ::_exit(1);
-        }
-    }
-
-    void runGlobalInitializersOrDie(int argc, const char* const* argv, const char* const* envp) {
+    Status runGlobalInitializers(int argc, const char* const* argv, const char* const* envp) {
         InitializerContext::ArgumentVector args(argc);
         std::copy(argv, argv + argc, args.begin());
 
@@ -79,14 +91,21 @@ namespace mongo {
             for(; *envp; ++envp) {
                 const char* firstEqualSign = strchr(*envp, '=');
                 if (!firstEqualSign) {
-                    std::cerr << "Failed global initialization: malformed environment block\n";
-                    ::_exit(1);
+                    return Status(ErrorCodes::BadValue, "malformed environment block");
                 }
                 env[std::string(*envp, firstEqualSign)] = std::string(firstEqualSign + 1);
             }
         }
 
-        runGlobalInitializersOrDie(args, env);
+        return runGlobalInitializers(args, env);
+    }
+
+    void runGlobalInitializersOrDie(int argc, const char* const* argv, const char* const* envp) {
+        Status status = runGlobalInitializers(argc, argv, envp);
+        if (!status.isOK()) {
+            std::cerr << "Failed global initialization: " << status << std::endl;
+            abort();
+        }
     }
 
 }  // namespace mongo

@@ -22,17 +22,36 @@
 #error "windows_basic included but _WIN32 is not defined"
 #endif
 
+// "If you define NTDDI_VERSION, you must also define _WIN32_WINNT":
+// http://msdn.microsoft.com/en-us/library/windows/desktop/aa383745(v=vs.85).aspx
+#if defined(NTDDI_VERSION) && !defined(_WIN32_WINNT)
+#error NTDDI_VERSION defined but _WIN32_WINNT is undefined
+#endif
+
 // Ensure that _WIN32_WINNT is set to something before we include windows.h. For server builds
 // both _WIN32_WINNT and NTDDI_VERSION are set as defines on the command line, but we need
 // these here for things like client driver builds, where they may not already be set.
 #if !defined(_WIN32_WINNT)
 // Can't use symbolic versions here, since we may not have seen sdkddkver.h yet.
 #if defined(_WIN64)
-// 64-bit builds default to Windows Vista support.
-#define _WIN32_WINNT 0x0600
+// 64-bit builds default to Windows Server 2003 support.
+#define _WIN32_WINNT 0x0502
 #else
 // 32-bit builds default to Windows XP support.
 #define _WIN32_WINNT 0x0501
+#endif
+#endif
+
+// As above, but for NTDDI_VERSION. Otherwise, <windows.h> would set our NTDDI_VERSION based on
+// _WIN32_WINNT, but not select the service pack revision.
+#if !defined(NTDDI_VERSION)
+// Can't use symbolic versions here, since we may not have seen sdkddkver.h yet.
+#if defined(_WIN64)
+// 64-bit builds default to Windows Server 2003 SP 2 support.
+#define NTDDI_VERSION 0x05020200
+#else
+// 32-bit builds default to Windows XP SP 3 support.
+#define NTDDI_VERSION 0x05010300
 #endif
 #endif
 
@@ -40,9 +59,11 @@
 
 // for rand_s() usage:
 # define _CRT_RAND_S
-# ifndef NOMINMAX
-#  define NOMINMAX
-# endif
+
+// Do not complain that about standard library functions that Windows believes should have
+// underscores in front of them, such as unlink().
+#define _CRT_NONSTDC_NO_DEPRECATE
+
 // tell windows.h not to include a bunch of headers we don't need:
 # define WIN32_LEAN_AND_MEAN
 
@@ -62,8 +83,8 @@
 #endif
 
 #if defined(_WIN64)
-#if !defined(NTDDI_VISTA) || (NTDDI_VERSION < NTDDI_VISTA)
-#error "64 bit mongo does not support Windows versions older than Vista"
+#if !defined(NTDDI_WS03SP2) || (NTDDI_VERSION < NTDDI_WS03SP2)
+#error "64 bit mongo does not support Windows versions older than Windows Server 2003 SP 2"
 #endif
 #else
 #if !defined(NTDDI_WINXPSP3) || (NTDDI_VERSION < NTDDI_WINXPSP3)

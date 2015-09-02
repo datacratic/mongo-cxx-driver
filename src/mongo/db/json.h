@@ -1,18 +1,17 @@
-/**
-*    Copyright (C) 2008 10gen Inc.
-*
-*    This program is free software: you can redistribute it and/or  modify
-*    it under the terms of the GNU Affero General Public License, version 3,
-*    as published by the Free Software Foundation.
-*
-*    This program is distributed in the hope that it will be useful,
-*    but WITHOUT ANY WARRANTY; without even the implied warranty of
-*    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-*    GNU Affero General Public License for more details.
-*
-*    You should have received a copy of the GNU Affero General Public License
-*    along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
+/*    Copyright 2014 MongoDB Inc.
+ *
+ *    Licensed under the Apache License, Version 2.0 (the "License");
+ *    you may not use this file except in compliance with the License.
+ *    You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *    Unless required by applicable law or agreed to in writing, software
+ *    distributed under the License is distributed on an "AS IS" BASIS,
+ *    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *    See the License for the specific language governing permissions and
+ *    limitations under the License.
+ */
 
 #pragma once
 
@@ -20,6 +19,7 @@
 
 #include "mongo/bson/bsonobj.h"
 #include "mongo/base/status.h"
+#include "mongo/client/export_macros.h"
 
 namespace mongo {
 
@@ -36,10 +36,53 @@ namespace mongo {
      * @throws MsgAssertionException if parsing fails.  The message included with
      * this assertion includes the character offset where parsing failed.
      */
-    BSONObj fromjson(const std::string& str);
+    MONGO_CLIENT_API BSONObj MONGO_CLIENT_FUNC fromjson(const std::string& str);
 
     /** @param len will be size of JSON object in text chars. */
-    BSONObj fromjson(const char* str, int* len=NULL);
+    MONGO_CLIENT_API BSONObj MONGO_CLIENT_FUNC fromjson(const char* str, int* len=NULL);
+
+    /**
+     * Tests whether the JSON string is an Array.
+     *
+     * Useful for assigning the result of fromjson to the right object type. Either:
+     *  BSONObj
+     *  BSONArray
+     *
+     * Example: Using the method to select the proper type.
+     *
+     *  If this method returns true, the user could store the result of fromjson
+     *  inside a BSONArray, rather than a BSONObj, in order to have it print as an
+     *  array when passed to tojson.
+     *
+     * @param obj The JSON string to test.
+     */
+    MONGO_CLIENT_API bool isArray(const StringData& str);
+
+    /**
+     * Convert a BSONArray to a JSON string.
+     *
+     * @param arr The BSON Array.
+     * @param format The JSON format (JS, TenGen, Strict).
+     * @param pretty Enables pretty output.
+     */
+    MONGO_CLIENT_API std::string tojson(
+        const BSONArray& arr,
+        JsonStringFormat format = Strict,
+        bool pretty = false
+    );
+
+    /**
+     * Convert a BSONObj to a JSON string.
+     *
+     * @param obj The BSON Object.
+     * @param format The JSON format (JS, TenGen, Strict).
+     * @param pretty Enables pretty output.
+     */
+    MONGO_CLIENT_API std::string tojson(
+        const BSONObj& obj,
+        JsonStringFormat format = Strict,
+        bool pretty = false
+    );
 
     /**
      * Parser class.  A BSONObj is constructed incrementally by passing a
@@ -48,7 +91,7 @@ namespace mongo {
      */
     class JParse {
         public:
-            explicit JParse(const char*);
+            explicit JParse(const StringData& str);
 
             /*
              * Notation: All-uppercase symbols denote non-terminals; all other
@@ -59,6 +102,8 @@ namespace mongo {
              * VALUE :
              *     STRING
              *   | NUMBER
+             *   | NUMBERINT
+             *   | NUMBERLONG
              *   | OBJECT
              *   | ARRAY
              *
@@ -103,10 +148,15 @@ namespace mongo {
              *   | REGEXOBJECT
              *   | REFOBJECT
              *   | UNDEFINEDOBJECT
+             *   | NUMBERLONGOBJECT
+             *   | MINKEYOBJECT
+             *   | MAXKEYOBJECT
              *
              */
         public:
             Status object(const StringData& fieldName, BSONObjBuilder&, bool subObj=true);
+            Status parse(BSONObjBuilder& builder);
+            bool isArray();
 
         private:
             /* The following functions are called with the '{' and the first
@@ -166,6 +216,24 @@ namespace mongo {
             Status undefinedObject(const StringData& fieldName, BSONObjBuilder&);
 
             /*
+             * NUMBERLONGOBJECT :
+             *     { FIELD("$numberLong") : "<number>" }
+             */
+            Status numberLongObject(const StringData& fieldName, BSONObjBuilder&);
+
+            /*
+             * MINKEYOBJECT :
+             *     { FIELD("$minKey") : 1 }
+             */
+            Status minKeyObject(const StringData& fieldName, BSONObjBuilder& builder);
+
+            /*
+             * MAXKEYOBJECT :
+             *     { FIELD("$maxKey") : 1 }
+             */
+            Status maxKeyObject(const StringData& fieldName, BSONObjBuilder& builder);
+
+            /*
              * ARRAY :
              *     []
              *   | [ ELEMENTS ]
@@ -174,7 +242,7 @@ namespace mongo {
              *     VALUE
              *   | VALUE , ELEMENTS
              */
-            Status array(const StringData& fieldName, BSONObjBuilder&);
+            Status array(const StringData& fieldName, BSONObjBuilder&, bool subObj=true);
 
             /*
              * NOTE: Currently only Date can be preceded by the "new" keyword
@@ -203,6 +271,18 @@ namespace mongo {
              *     ObjectId( <24 character hex string> )
              */
             Status objectId(const StringData& fieldName, BSONObjBuilder&);
+
+            /*
+             * NUMBERLONG :
+             *     NumberLong( <number> )
+             */
+            Status numberLong(const StringData& fieldName, BSONObjBuilder&);
+
+            /*
+             * NUMBERINT :
+             *     NumberInt( <number> )
+             */
+            Status numberInt(const StringData& fieldName, BSONObjBuilder&);
 
             /*
              * DBREF :
@@ -326,15 +406,31 @@ namespace mongo {
              * @return true if the given token matches the next non whitespace
              * sequence in our buffer, and false if the token doesn't match or
              * we reach the end of our buffer.  Do not update the pointer to our
+             * buffer (same as calling readTokenImpl with advance=false).
+             */
+            inline bool peekToken(const char* token);
+
+            /**
+             * @return true if the given token matches the next non whitespace
+             * sequence in our buffer, and false if the token doesn't match or
+             * we reach the end of our buffer.  Updates the pointer to our
+             * buffer (same as calling readTokenImpl with advance=true).
+             */
+            inline bool readToken(const char* token);
+
+            /**
+             * @return true if the given token matches the next non whitespace
+             * sequence in our buffer, and false if the token doesn't match or
+             * we reach the end of our buffer.  Do not update the pointer to our
              * buffer if advance is false.
              */
-            bool accept(const char* token, bool advance=true);
+            bool readTokenImpl(const char* token, bool advance=true);
 
             /**
              * @return true if the next field in our stream matches field.
              * Handles single quoted, double quoted, and unquoted field names
              */
-            bool acceptField(const StringData& field);
+            bool readField(const StringData& field);
 
             /**
              * @return true if matchChar is in matchSet

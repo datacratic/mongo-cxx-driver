@@ -17,41 +17,109 @@
 
 #pragma once
 
+#include <iosfwd>
 #include <ctime>
 #include <string>
+#include <boost/date_time/posix_time/posix_time_types.hpp>
 #include <boost/thread/xtime.hpp>
-#include <boost/date_time/posix_time/posix_time.hpp>
+#include <boost/version.hpp>
 
-#include "mongo/bson/util/misc.h"  // Date_t
+#include "mongo/base/status_with.h"
+#include "mongo/client/export_macros.h"
 
 namespace mongo {
 
-    void time_t_to_Struct(time_t t, struct tm * buf , bool local = false );
+    typedef boost::posix_time::milliseconds Milliseconds;
+    typedef boost::posix_time::seconds Seconds;
 
-    /**
-     * Gets the current time string (in fixed width) in UTC. Sample format:
-     *
-     * Wed Oct 31 13:34:47.996
-     *
-     * @param timeStr pointer to the buffer to set the string - should at least be
-     *     24 bytes big.
-     */
-    void curTimeString(char* timeStr);
+    void time_t_to_Struct(time_t t, struct tm * buf , bool local = false );
+    std::string time_t_to_String(time_t t);
+    std::string time_t_to_String_short(time_t t);
+
+    struct MONGO_CLIENT_API Date_t {
+        // TODO: make signed (and look for related TODO's)
+        unsigned long long millis;
+        Date_t(): millis(0) {}
+        Date_t(unsigned long long m): millis(m) {}
+        operator unsigned long long&() { return millis; }
+        operator const unsigned long long&() const { return millis; }
+        void toTm (tm *buf);
+        std::string toString() const;
+        time_t toTimeT() const;
+        int64_t asInt64() const {
+            return static_cast<int64_t>(millis);
+        }
+        bool isFormatable() const;
+    };
 
     // uses ISO 8601 dates without trailing Z
     // colonsOk should be false when creating filenames
-    std::string terseCurrentTime(bool colonsOk=true);
+    MONGO_CLIENT_API std::string MONGO_CLIENT_FUNC terseCurrentTime(bool colonsOk=true);
 
-    std::string timeToISOString(time_t time);
+    /**
+     * Formats "time" according to the ISO 8601 extended form standard, including date,
+     * and time, in the UTC timezone.
+     *
+     * Sample format: "2013-07-23T18:42:14Z"
+     */
+    MONGO_CLIENT_API std::string MONGO_CLIENT_FUNC timeToISOString(time_t time);
+
+    /**
+     * Formats "date" according to the ISO 8601 extended form standard, including date,
+     * and time with milliseconds decimal component, in the UTC timezone.
+     *
+     * Sample format: "2013-07-23T18:42:14.072Z"
+     */
+    MONGO_CLIENT_API std::string MONGO_CLIENT_FUNC dateToISOStringUTC(Date_t date);
+
+    /**
+     * Formats "date" according to the ISO 8601 extended form standard, including date,
+     * and time with milliseconds decimal component, in the local timezone.
+     *
+     * Sample format: "2013-07-23T18:42:14.072-05:00"
+     */
+    MONGO_CLIENT_API std::string MONGO_CLIENT_FUNC dateToISOStringLocal(Date_t date);
+
+    /**
+     * Formats "date" in fixed width in the local time zone.
+     *
+     * Sample format: "Wed Oct 31 13:34:47.996"
+     */
+    MONGO_CLIENT_API std::string MONGO_CLIENT_FUNC dateToCtimeString(Date_t date);
+
+    /**
+     * Parses a Date_t from an ISO 8601 string representation.
+     *
+     * Sample formats: "2013-07-23T18:42:14.072-05:00"
+     *                 "2013-07-23T18:42:14.072Z"
+     *
+     * Local times are currently not supported.
+     */
+    MONGO_CLIENT_API StatusWith<Date_t> MONGO_CLIENT_FUNC dateFromISOString(const StringData& dateString);
+
+    /**
+     * Like dateToISOStringUTC, except outputs to a std::ostream.
+     */
+    MONGO_CLIENT_API void MONGO_CLIENT_FUNC outputDateAsISOStringUTC(std::ostream& os, Date_t date);
+
+    /**
+     * Like dateToISOStringLocal, except outputs to a std::ostream.
+     */
+    MONGO_CLIENT_API void MONGO_CLIENT_FUNC outputDateAsISOStringLocal(std::ostream& os, Date_t date);
+
+    /**
+     * Like dateToCtimeString, except outputs to a std::ostream.
+     */
+    MONGO_CLIENT_API void MONGO_CLIENT_FUNC outputDateAsCtime(std::ostream& os, Date_t date);
 
     boost::gregorian::date currentDate();
 
     // parses time of day in "hh:mm" format assuming 'hh' is 00-23
     bool toPointInTime( const std::string& str , boost::posix_time::ptime* timeOfDay );
 
-    void sleepsecs(int s);
-    void sleepmillis(long long ms);
-    void sleepmicros(long long micros);
+    MONGO_CLIENT_API void MONGO_CLIENT_FUNC sleepsecs(int s);
+    MONGO_CLIENT_API void MONGO_CLIENT_FUNC sleepmillis(long long ms);
+    MONGO_CLIENT_API void MONGO_CLIENT_FUNC sleepmicros(long long micros);
 
     class Backoff {
     public:
@@ -64,6 +132,12 @@ namespace mongo {
         {}
 
         void nextSleepMillis();
+
+        /**
+         * testing-only function. used in dbtests/basictests.cpp
+         */
+        int getNextSleepMillis(int lastSleepMillis, unsigned long long currTimeMillis,
+                               unsigned long long lastErrorTimeMillis) const;
 
     private:
 
@@ -83,7 +157,7 @@ namespace mongo {
     long long getJSTimeVirtualThreadSkew();
 
     /** Date_t is milliseconds since epoch */
-     Date_t jsTime();
+    MONGO_CLIENT_API Date_t MONGO_CLIENT_FUNC jsTime();
 
     /** warning this will wrap */
     unsigned curTimeMicros();
@@ -96,10 +170,11 @@ namespace mongo {
     struct tm *gmtime(const time_t *timep);
     struct tm *localtime(const time_t *timep);
 
-#if defined(MONGO_BOOST_TIME_UTC_HACK) || (BOOST_VERSION >= 105000)
+#if (BOOST_VERSION >= 105000)
 #define MONGO_BOOST_TIME_UTC boost::TIME_UTC_
 #else
 #define MONGO_BOOST_TIME_UTC boost::TIME_UTC
 #endif
 
 }  // namespace mongo
+

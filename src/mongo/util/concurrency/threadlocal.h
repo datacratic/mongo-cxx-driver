@@ -1,30 +1,26 @@
 #pragma once
 
-/**
-*    Copyright (C) 2011 10gen Inc.
-*
-*    This program is free software: you can redistribute it and/or  modify
-*    it under the terms of the GNU Affero General Public License, version 3,
-*    as published by the Free Software Foundation.
-*
-*    This program is distributed in the hope that it will be useful,
-*    but WITHOUT ANY WARRANTY; without even the implied warranty of
-*    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-*    GNU Affero General Public License for more details.
-*
-*    You should have received a copy of the GNU Affero General Public License
-*    along with this program.  If not, see <http://www.gnu.org/licenses/>.
-*/
+/*    Copyright 2014 MongoDB Inc.
+ *
+ *    Licensed under the Apache License, Version 2.0 (the "License");
+ *    you may not use this file except in compliance with the License.
+ *    You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *    Unless required by applicable law or agreed to in writing, software
+ *    distributed under the License is distributed on an "AS IS" BASIS,
+ *    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *    See the License for the specific language governing permissions and
+ *    limitations under the License.
+ */
 
 #include "mongo/client/undef_macros.h"
 #include <boost/thread/tss.hpp>
-#include <boost/bind.hpp>
 #include "mongo/client/redef_macros.h"
 
 
 namespace mongo { 
-
-    using boost::thread_specific_ptr;
 
     /* thread local "value" rather than a pointer
        good for things which have copy constructors (and the copy constructor is fast enough)
@@ -74,7 +70,7 @@ namespace mongo {
        a combination here, with the assumption that reset's are infrequent, so that 
        get's are fast.
     */
-#if defined(_WIN32) || (defined(__GNUC__) && defined(__linux__))
+#if defined(MONGO_HAVE___THREAD) || defined(MONGO_HAVE___DECLSPEC_THREAD)
         
     template< class T >
     struct TSP {
@@ -90,7 +86,7 @@ namespace mongo {
         }
     };
 
-# if defined(_WIN32)
+# if defined(MONGO_HAVE___DECLSPEC_THREAD)
 
 #  define TSP_DECLARE(T,p) extern TSP<T> p;
 
@@ -117,7 +113,7 @@ namespace mongo {
     TSP<T> p;
 # endif
 
-#elif defined(__APPLE__)
+#elif defined(_POSIX_THREADS) && (_POSIX_THREADS >= 0)
     template< class T>
     struct TSP {
         pthread_key_t _key;
@@ -163,7 +159,7 @@ namespace mongo {
 
     template< class T >
     struct TSP {
-        thread_specific_ptr<T> tsp;
+        boost::thread_specific_ptr<T> tsp;
     public:
         T* get() const { return tsp.get(); }
         void reset(T* v) { tsp.reset(v); }

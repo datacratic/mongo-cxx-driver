@@ -15,29 +15,39 @@
  *    limitations under the License.
  */
 
-#include "pch.h"
+#include "mongo/platform/basic.h"
 
+#include "mongo/client/gridfs.h"
+
+#include <algorithm>
 #include <boost/smart_ptr.hpp>
 #include <fcntl.h>
 #include <fstream>
+#include <iostream>
 #include <utility>
-
-#include "mongo/client/gridfs.h"
-#include "mongo/client/dbclientcursor.h"
 
 #if defined(_WIN32)
 #include <io.h>
 #endif
 
+#include "mongo/client/dbclientcursor.h"
+
 #ifndef MIN
 #define MIN(a,b) ( (a) < (b) ? (a) : (b) )
 #endif
 
-#include <boost/filesystem/operations.hpp>
 
 namespace mongo {
 
-    const unsigned DEFAULT_CHUNK_SIZE = 256 * 1024;
+    using std::min;
+    using std::auto_ptr;
+    using std::cout;
+    using std::ios;
+    using std::ofstream;
+    using std::ostream;
+    using std::string;
+
+    const unsigned DEFAULT_CHUNK_SIZE = 255 * 1024;
 
     GridFSChunk::GridFSChunk( BSONObj o ) {
         _data = o;
@@ -57,8 +67,8 @@ namespace mongo {
         _chunksNS = dbName + "." + prefix + ".chunks";
         _chunkSize = DEFAULT_CHUNK_SIZE;
 
-        client.ensureIndex( _filesNS , BSON( "filename" << 1 ) );
-        client.ensureIndex( _chunksNS , BSON( "files_id" << 1 << "n" << 1 ) , /*unique=*/true );
+        client.createIndex( _filesNS , BSON( "filename" << 1 ) );
+        client.createIndex( _chunksNS , IndexSpec().addKeys(BSON( "files_id" << 1 << "n" << 1 )).unique() );
     }
 
     GridFS::~GridFS() {
@@ -96,8 +106,6 @@ namespace mongo {
 
 
     BSONObj GridFS::storeFile( const string& fileName , const string& remoteName , const string& contentType) {
-        uassert( 10012 ,  "file doesn't exist" , fileName == "-" || boost::filesystem::exists( fileName ) );
-
         FILE* fd;
         if (fileName == "-")
             fd = stdin;
@@ -176,11 +184,13 @@ namespace mongo {
 
     void GridFS::removeFile( const string& fileName ) {
         auto_ptr<DBClientCursor> files = _client.query( _filesNS , BSON( "filename" << fileName ) );
-        while (files->more()) {
-            BSONObj file = files->next();
-            BSONElement id = file["_id"];
-            _client.remove( _filesNS.c_str() , BSON( "_id" << id ) );
-            _client.remove( _chunksNS.c_str() , BSON( "files_id" << id ) );
+        if (files.get()) {
+            while (files->more()) {
+                BSONObj file = files->next();
+                BSONElement id = file["_id"];
+                _client.remove( _filesNS.c_str() , BSON( "_id" << id ) );
+                _client.remove( _chunksNS.c_str() , BSON( "files_id" << id ) );
+            }
         }
     }
 
@@ -189,13 +199,13 @@ namespace mongo {
         _obj = obj;
     }
 
-    GridFile GridFS::findFile( const string& fileName ) const {
+    GridFile GridFS::findFileByName( const string& fileName ) const {
         return findFile( BSON( "filename" << fileName ) );
     };
 
-    GridFile GridFS::findFile( BSONObj query ) const {
-        query = BSON("query" << query << "orderby" << BSON("uploadDate" << -1));
-        return GridFile( this , _client.findOne( _filesNS.c_str() , query ) );
+    GridFile GridFS::findFile( Query query ) const {
+        query.sort(BSON("uploadDate" << -1));
+        return GridFile( this , _client.findOne( _filesNS.c_str() , query.obj ) );
     }
 
     auto_ptr<DBClientCursor> GridFS::list() const {
@@ -204,6 +214,10 @@ namespace mongo {
 
     auto_ptr<DBClientCursor> GridFS::list( BSONObj o ) const {
         return _client.query( _filesNS.c_str() , o );
+    }
+
+    void GridFS::_insertChunk( const GridFSChunk& chunk ) {
+        _client.insert( _chunksNS.c_str() , chunk._data );
     }
 
     BSONObj GridFile::getMetadata() const {
@@ -256,5 +270,93 @@ namespace mongo {
     void GridFile::_exists() const {
         uassert( 10015 ,  "doesn't exists" , exists() );
     }
+    
+    GridFileBuilder::GridFileBuilder( GridFS* const grid ) :
+        _grid( grid ),
+        _chunkSize( grid->getChunkSize() ),
+        _currentChunk( 0 ),
+        _pendingData( new char[_chunkSize] ),
+        _pendingDataSize( 0 ),
+        _fileLength( 0 ) {
+        _fileId.init();
+        _fileIdObj = BSON( "_id" << _fileId );
+    }
+    
+    const char* GridFileBuilder::_appendChunk( const char* data,
+                                               size_t length,
+                                               bool forcePendingInsert ) {
+        const char* const end = data + length;
+        while (data < end) {
+            size_t chunkLen = min( _chunkSize, static_cast<size_t>(end-data) );
+            // the last chunk needs to be stored as pendingData, break while if
+            // necessary
+            if ((chunkLen < _chunkSize) && (!forcePendingInsert))
+                break;
+            GridFSChunk chunk( _fileIdObj, _currentChunk, data, chunkLen );
+            _grid->_insertChunk( chunk );
+            ++_currentChunk;
+            data += chunkLen;
+            _fileLength += chunkLen;
+        }
+        return data;
+    }
+    
+    void GridFileBuilder::_appendPendingData() {
+        if (_pendingDataSize > 0) {
+            _appendChunk( _pendingData.get(), _pendingDataSize, true );
+            _pendingDataSize = 0;
+        }
+    }
+    
+    void GridFileBuilder::appendChunk( const char* data, size_t length ) {
+        if (length == 0)
+            return;
 
+        // check if there is pending data
+        if (_pendingDataSize > 0) {
+            size_t totalSize = _pendingDataSize + length;
+            size_t size = min( _chunkSize, totalSize ) - _pendingDataSize;
+            memcpy( _pendingData.get() + _pendingDataSize, data, size );
+            _pendingDataSize += size;
+            invariant( _pendingDataSize <= _chunkSize );
+            if (_pendingDataSize == _chunkSize) {
+                _appendPendingData();
+                const char* const end = data + length;
+                data = _appendChunk( data + size, length - size, false );
+                if (data != end) {
+                    invariant(data < end);
+                    size_t nsize = static_cast<size_t>(end - data);
+                    memcpy( _pendingData.get() + _pendingDataSize, data, nsize );
+                    _pendingDataSize += nsize;
+                }
+            }
+        }
+        else {
+            const char* const end = data + length;
+            // split data in _chunkSize blocks, and store as pending the last block if
+            // necessary
+            data = _appendChunk( data, length, false );
+            // process pending data if necessary
+            if (data != end) {
+                size_t size = static_cast<size_t>(end-data);
+                memcpy( _pendingData.get() + _pendingDataSize, data, size );
+                _pendingDataSize += size;
+            }
+        }
+    }
+    
+    BSONObj GridFileBuilder::buildFile( const string& remoteName,
+                                        const string& contentType ) {
+        _appendPendingData();
+        BSONObj ret = _grid->insertFile( remoteName, _fileId, _fileLength,
+                                         contentType );
+        // resets the object to allow more data append for a GridFile
+        _currentChunk = 0;
+        _pendingDataSize = 0;
+        _fileLength = 0;
+        _fileId.init();
+        _fileIdObj = BSON( "_id" << _fileId );
+        return ret;
+    }
+    
 }

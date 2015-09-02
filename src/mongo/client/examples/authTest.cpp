@@ -15,29 +15,64 @@
  *    limitations under the License.
  */
 
+// It is the responsibility of the mongo client consumer to ensure that any necessary windows
+// headers have already been included before including the driver facade headers.
+#if defined(_WIN32)
+#include <winsock2.h>
+#include <windows.h>
+#endif
+
+#include "mongo/client/dbclient.h"
+
 #include <boost/scoped_ptr.hpp>
 #include <iostream>
 #include <cstdlib>
 #include <string>
-#include "mongo/client/dbclient.h"
+#include <utility>
 
 using namespace mongo;
 
+bool serverLTE(DBClientBase* c, int major, int minor) {
+    BSONObj result;
+    c->runCommand("admin", BSON("buildinfo" << true), result);
+
+    std::vector<BSONElement> version = result.getField("versionArray").Array();
+    int serverMajor = version[0].Int();
+    int serverMinor = version[1].Int();
+
+    // std::pair uses lexicographic ordering
+    return std::make_pair(serverMajor, serverMinor) <=
+           std::make_pair(major, minor);
+}
+
+
 int main( int argc, const char **argv ) {
 
-    const char *port = "27017";
-    if ( argc != 1 ) {
-        if ( argc != 3 ) {
-            std::cout << "need to pass port as second param" << endl;
-            return EXIT_FAILURE;
-        }
-        port = argv[ 2 ];
+    using std::cout;
+    using std::endl;
+    using std::string;
+
+    if ( argc > 2 ) {
+        std::cout << "usage: " << argv[0] << " [MONGODB_URI]"  << std::endl;
+        return EXIT_FAILURE;
     }
 
+    client::Options autoTimeoutOpts = client::Options();
+    autoTimeoutOpts.setAutoShutdownGracePeriodMillis(250);
+
+    mongo::client::GlobalInstance instance(autoTimeoutOpts);
+    if (!instance.initialized()) {
+        std::cout << "failed to initialize the client driver: " << instance.status() << std::endl;
+        return EXIT_FAILURE;
+    }
+
+    std::string uri = argc == 2 ? argv[1] : "mongodb://localhost:27017";
     std::string errmsg;
-    ConnectionString cs = ConnectionString::parse(string("127.0.0.1:") + port, errmsg);
+
+    ConnectionString cs = ConnectionString::parse(uri, errmsg);
+
     if (!cs.isValid()) {
-        cout << "error parsing url: " << errmsg << endl;
+        std::cout << "Error parsing connection string " << uri << ": " << errmsg << std::endl;
         return EXIT_FAILURE;
     }
 
@@ -47,27 +82,43 @@ int main( int argc, const char **argv ) {
         return EXIT_FAILURE;
     }
 
-    // clean up old data from any previous tests
-    conn->remove( "test.system.users" , BSONObj() );
+    bool worked;
+    BSONObj ret;
 
-    conn->insert( "test.system.users" , BSON( "user" << "eliot" << "pwd" << conn->createPasswordDigest( "eliot" , "bar" ) ) );
+    // clean up old data from any previous tests
+    worked = conn->runCommand( "test", BSON("dropAllUsersFromDatabase" << 1), ret );
+    if (!worked) {
+        cout << "Running MongoDB < 2.5.3 so falling back to old remove" << endl;
+        conn->remove( "test.system.users" , BSONObj() );
+    }
+
+    // create a new user
+    worked = conn->runCommand( "test",
+        BSON( "createUser" << "eliot" <<
+                "pwd" << "bar" <<
+                "roles" << BSON_ARRAY("readWrite")),
+        ret);
+    if (!worked) {
+        cout << "Running MongoDB < 2.5.3 so falling back to old user creation" << endl;
+        conn->insert( "test.system.users" , BSON( "user" <<
+            "eliot" << "pwd" << conn->createPasswordDigest( "eliot" , "bar" ) ) );
+    }
 
     errmsg.clear();
-    conn->auth(BSON("user" << "eliot" <<
-                    "userSource" << "test" <<
-                    "pwd" << "bar" <<
-                    "mechanism" << "MONGODB-CR"));
+    if (!conn->auth("test", "eliot", "bar", errmsg)) {
+        cout << "Authentication failed, when it should have succeeded. Got error: " << errmsg << endl;
+        return EXIT_FAILURE;
+    }
 
     try {
-        conn->auth(BSON("user" << "eliot" <<
-                        "userSource" << "test" <<
-                        "pwd" << "bars" << // incorrect password
-                        "mechanism" << "MONGODB-CR"));
-        // Shouldn't get here.
-        cout << "Authentication with invalid password should have failed but didn't" << endl;
-        return EXIT_FAILURE;
-    } catch (const DBException& e) {
-        // expected
+        if (conn->auth("test", "eliot", "bars", errmsg)) { // incorrect password
+            cout << "Authentication with invalid password should have failed but didn't" << endl;
+            return EXIT_FAILURE;
+        }
+    } catch (const DBException&) {
+        //Expected on v2.2 and below
+        assert(serverLTE(conn.get(), 2, 2));
     }
+
     return EXIT_SUCCESS;
 }

@@ -1,6 +1,6 @@
 /** @file bson.h
 
-    Main bson include file for mongodb c++ clients. MongoDB includes ../db/jsobj.h instead. 
+    Main bson include file for mongodb c++ clients. MongoDB includes ../db/jsobj.h instead.
     This file, however, pulls in much less code / dependencies.
 
     @see bsondemo
@@ -23,7 +23,8 @@
  */
 
 /**
-   Main include file for C++ BSON module when using standalone (sans MongoDB client).
+   Main include file for C++ BSON. This pulls in fewer dependencies than
+   mongo/client/dbclient.h, but still requires libmongoclient to link.
 
    "BSON" stands for "binary JSON" -- ie a binary way to represent objects that would be
    represented in JSON (plus a few extensions useful for databases & other languages).
@@ -33,76 +34,42 @@
 
 #pragma once
 
-#if defined(MONGO_EXPOSE_MACROS)
-#error this header is for client programs, not the mongo database itself. include jsobj.h instead.
-/* because we define simplistic assert helpers here that don't pull in a bunch of util -- so that
-   BSON can be used header only.
-   */
+#ifdef MONGO_EXPOSE_MACROS
+#error bson.h is for C++ driver consumer use only
 #endif
 
-#include <cstdlib>
-#include <memory>
-#include <iostream>
-#include <sstream>
-
-#include "mongo/platform/compiler.h"
-
-namespace bson {
-
-    using std::string;
-    using std::stringstream;
-
-    class assertion : public std::exception {
-    public:
-        assertion( unsigned u , const std::string& s )
-            : id( u ) , msg( s ) {
-            std::stringstream ss;
-            ss << "BsonAssertion id: " << u << " " << s;
-            full = ss.str();
-        }
-
-        virtual ~assertion() throw() {}
-
-        virtual const char* what() const throw() { return full.c_str(); }
-
-        unsigned id;
-        std::string msg;
-        std::string full;
-    };
-}
-
-namespace mongo {
-#if !defined(verify)
-    inline void verify(bool expr) {
-        if(!expr) {
-            throw bson::assertion( 0 , "assertion failure in bson library" );
-        }
-    }
+// Consumers of the MongoDB C++ client library must define STATIC_LIBMONGOCLIENT when including
+// this header if they intend to link against the static version of the library. This is best
+// handled by adding STATIC_LIBMONGOCLIENT to the list of definitions passed on each compile
+// invocation.
+#ifndef STATIC_LIBMONGOCLIENT
+#if defined(_WIN32) && !defined(_DLL)
+#error "The DLL build of libmongoclient requires consuming code to be built with /MD or /MDd"
 #endif
-#if !defined(uassert)
-    MONGO_COMPILER_NORETURN inline void uasserted(int msgid, const std::string &s) {
-        throw bson::assertion( msgid , s );
-    }
-
-    inline void uassert(unsigned msgid, const std::string& msg, bool expr) {
-        if( !expr )
-            uasserted( msgid , msg );
-    }
-    MONGO_COMPILER_NORETURN inline void msgasserted(int msgid, const char *msg) {
-        throw bson::assertion( msgid , msg );
-    }
-    MONGO_COMPILER_NORETURN inline void msgasserted(int msgid, const std::string &msg) {
-        msgasserted(msgid, msg.c_str());
-    }
-    inline void massert(int msgid, const std::string& msg, bool expr) {
-        if(!expr) {
-            std::cout << "assertion failure in bson library: " << msgid << ' ' << msg << std::endl;
-            throw bson::assertion( msgid , msg );
-        }
-    }
 #endif
-}
 
+#if defined(_MSC_VER)
+#pragma warning(push)
+// Don't emit deprecation warnings
+#pragma warning(disable:4996)
+#if defined(_DLL)
+// Don't spam DLL consumers with warnings about STL symbol exports
+#pragma warning(disable:4251)
+#pragma warning(disable:4275)
+#endif
+#endif
+
+#if defined(_WIN32) && !defined(_WINSOCK2API_)
+#error "You must include the windows and windows sockets headers before bson.h"
+#endif
+
+#include "mongo/config.h"
+
+#include "mongo/client/redef_macros.h"
+
+#include "mongo/client/autolib.h"
+
+#include "mongo/bson/bson_validate.h"
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsonobjbuilder.h"
@@ -111,3 +78,9 @@ namespace mongo {
 #include "mongo/bson/bson-inl.h"
 #include "mongo/bson/oid.h"
 #include "mongo/bson/util/builder.h"
+
+#include "mongo/client/undef_macros.h"
+
+#if defined(_MSC_VER) && defined(_DLL)
+#pragma warning(pop)
+#endif

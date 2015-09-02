@@ -22,9 +22,7 @@
 
 namespace mongo {
 
-    struct StringMapDefaultHash {
-        size_t operator()( const StringData& k ) const;
-    };
+    typedef StringData::Hasher StringMapDefaultHash;
 
     struct StringMapDefaultEqual {
         bool operator()( const StringData& a, const StringData& b ) const {
@@ -39,7 +37,7 @@ namespace mongo {
     };
 
     struct StringMapDefaultConvertorOther {
-        string operator()( const StringData& s ) const {
+        std::string operator()( const StringData& s ) const {
             return s.toString();
         }
     };
@@ -54,6 +52,4 @@ namespace mongo {
                                                     StringMapDefaultConvertorOther > {
     };
 }
-
-#include "mongo/util/string_map_internal.h"
 

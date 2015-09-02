@@ -62,7 +62,7 @@ namespace mongo {
 
             int find( const K_L& key, size_t hash, int* firstEmpty, const UnorderedFastKeyTable& sm ) const;
 
-            void transfer( Area* newArea, const UnorderedFastKeyTable& sm ) const;
+            bool transfer( Area* newArea, const UnorderedFastKeyTable& sm ) const;
 
             void swap( Area* other ) {
                 using std::swap;
@@ -119,6 +119,8 @@ namespace mongo {
         size_t erase( const K_L& key );
 
         class const_iterator {
+            friend class UnorderedFastKeyTable;
+
         public:
             const_iterator() { _position = -1; }
             const_iterator( const Area* area ) {
@@ -134,6 +136,8 @@ namespace mongo {
             }
 
             const value_type* operator->() const { return &_area->_entries[_position].data; }
+
+            const value_type& operator*() const { return _area->_entries[_position].data; }
 
             const_iterator operator++() {
                 if ( _position < 0 )
@@ -171,6 +175,8 @@ namespace mongo {
             int _position;
             int _max; // inclusive
         };
+
+        void erase( const_iterator it );
 
         /**
          * @return either a one-shot iterator with the key, or end()

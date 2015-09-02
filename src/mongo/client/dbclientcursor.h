@@ -17,23 +17,25 @@
 
 #pragma once
 
-#include "mongo/pch.h"
-
 #include <stack>
 
 #include "mongo/client/dbclientinterface.h"
+#include "mongo/client/export_macros.h"
 #include "mongo/db/jsobj.h"
 #include "mongo/db/json.h"
 #include "mongo/util/net/message.h"
 
 namespace mongo {
 
-    class AScopedConnection;
+    class DBClientCursorShim;
+    class DBClientCursorShimCursorID;
+    class DBClientCursorShimArray;
+    class DBClientCursorShimTransform;
 
-    /** for mock purposes only -- do not create variants of DBClientCursor, nor hang code here 
+    /** for mock purposes only -- do not create variants of DBClientCursor, nor hang code here
         @see DBClientMockCursor
      */
-    class DBClientCursorInterface : boost::noncopyable {
+    class MONGO_CLIENT_API DBClientCursorInterface : boost::noncopyable {
     public:
         virtual ~DBClientCursorInterface() {}
         virtual bool more() = 0;
@@ -44,7 +46,7 @@ namespace mongo {
     };
 
     /** Queries return a cursor object */
-    class DBClientCursor : public DBClientCursorInterface {
+    class MONGO_CLIENT_API DBClientCursor : public DBClientCursorInterface {
     public:
         /** If true, safe to call next().  Requests more from server if necessary. */
         bool more();
@@ -74,23 +76,14 @@ namespace mongo {
         void putBack( const BSONObj &o ) { _putBack.push( o.getOwned() ); }
 
         /** throws AssertionException if get back { $err : ... } */
-        BSONObj nextSafe() {
-            BSONObj o = next();
-            if( strcmp(o.firstElementFieldName(), "$err") == 0 ) {
-                string s = "nextSafe(): " + o.toString();
-                if( logLevel >= 5 )
-                    log() << s << endl;
-                uasserted(13106, s);
-            }
-            return o;
-        }
+        BSONObj nextSafe();
 
         /** peek ahead at items buffered for future next() calls.
             never requests new data from the server.  so peek only effective
             with what is already buffered.
             WARNING: no support for _putBack yet!
         */
-        void peek(vector<BSONObj>&, int atMost);
+        void peek(std::vector<BSONObj>&, int atMost);
 
         // Peeks at first element, if exists
         BSONObj peekFirst();
@@ -117,7 +110,7 @@ namespace mongo {
            'dead' may be preset yet some data still queued and locally
            available from the dbclientcursor.
         */
-        bool isDead() const { return  !this || cursorId == 0; }
+        bool isDead() const { return cursorId == 0; }
 
         bool tailable() const { return (opts & QueryOption_CursorTailable) != 0; }
 
@@ -130,39 +123,12 @@ namespace mongo {
             return (resultFlags & flag) != 0;
         }
 
-        DBClientCursor( DBClientBase* client, const string &_ns, BSONObj _query, int _nToReturn,
-                        int _nToSkip, const BSONObj *_fieldsToReturn, int queryOptions , int bs ) :
-            _client(client),
-            ns(_ns),
-            query(_query),
-            nToReturn(_nToReturn),
-            haveLimit( _nToReturn > 0 && !(queryOptions & QueryOption_CursorTailable)),
-            nToSkip(_nToSkip),
-            fieldsToReturn(_fieldsToReturn),
-            opts(queryOptions),
-            batchSize(bs==1?2:bs),
-            resultFlags(0),
-            cursorId(),
-            _ownCursor( true ),
-            wasError( false ) {
-            _finishConsInit();
-        }
+        /// Change batchSize after construction. Can change after requesting first batch.
+        void setBatchSize(int newBatchSize) { batchSize = newBatchSize; }
 
-        DBClientCursor( DBClientBase* client, const string &_ns, long long _cursorId, int _nToReturn, int options ) :
-            _client(client),
-            ns(_ns),
-            nToReturn( _nToReturn ),
-            haveLimit( _nToReturn > 0 && !(options & QueryOption_CursorTailable)),
-            nToSkip(0),
-            fieldsToReturn(0),
-            opts( options ),
-            batchSize(0),
-            resultFlags(0),
-            cursorId(_cursorId),
-            _ownCursor(true),
-            wasError(false) {
-            _finishConsInit();
-        }
+        DBClientCursor( DBClientBase* client, const std::string &_ns, BSONObj _query, int _nToReturn,
+                        int _nToSkip, const BSONObj *_fieldsToReturn, int queryOptions , int bs );
+        DBClientCursor( DBClientBase* client, const std::string &_ns, long long _cursorId, int _nToReturn, int options, int _batchSize );
 
         virtual ~DBClientCursor();
 
@@ -173,11 +139,9 @@ namespace mongo {
         */
         void decouple() { _ownCursor = false; }
 
-        void attach( AScopedConnection * conn );
+        std::string originalHost() const { return _originalHost; }
 
-        string originalHost() const { return _originalHost; }
-
-        string getns() const { return ns; }
+        std::string getns() const { return ns; }
 
         Message* getMessage(){ return batch.m.get(); }
 
@@ -199,9 +163,9 @@ namespace mongo {
         void initLazy( bool isRetry = false );
         bool initLazyFinish( bool& retry );
 
-        class Batch : boost::noncopyable { 
+        class Batch : boost::noncopyable {
             friend class DBClientCursor;
-            auto_ptr<Message> m;
+            std::auto_ptr<Message> m;
             int nReturned;
             int pos;
             const char *data;
@@ -212,31 +176,40 @@ namespace mongo {
     private:
         friend class DBClientBase;
         friend class DBClientConnection;
+        friend class DBClientCursorShimCursorID;
+        friend class DBClientCursorShimArray;
+        friend class DBClientCursorShimTransform;
+        friend class DBClientWithCommands;
 
         int nextBatchSize();
         void _finishConsInit();
-        
+
+        BSONObj rawNext();
+        bool rawMore();
+
+        std::auto_ptr<DBClientCursorShim> shim;
+
         Batch batch;
         DBClientBase* _client;
-        string _originalHost;
-        string ns;
+        std::string _originalHost;
+        std::string ns;
         BSONObj query;
         int nToReturn;
-        bool haveLimit;
         int nToSkip;
+        long long nReturned;
         const BSONObj *fieldsToReturn;
         int opts;
         int batchSize;
-        stack< BSONObj > _putBack;
+        std::stack< BSONObj > _putBack;
         int resultFlags;
         long long cursorId;
         bool _ownCursor; // see decouple()
-        string _scopedHost;
-        string _lazyHost;
+        std::string _scopedHost;
+        std::string _lazyHost;
         bool wasError;
 
-        void dataReceived() { bool retry; string lazyHost; dataReceived( retry, lazyHost ); }
-        void dataReceived( bool& retry, string& lazyHost );
+        void dataReceived() { bool retry; std::string lazyHost; dataReceived( retry, lazyHost ); }
+        void dataReceived( bool& retry, std::string& lazyHost );
         void requestMore();
         void exhaustReceiveMore(); // for exhaust
 
@@ -253,7 +226,7 @@ namespace mongo {
 
     /** iterate over objects in current batch only - will not cause a network call
      */
-    class DBClientCursorBatchIterator {
+    class MONGO_CLIENT_API DBClientCursorBatchIterator {
     public:
         DBClientCursorBatchIterator( DBClientCursor &c ) : _c( c ), _n() {}
         bool moreInCurrentBatch() { return _c.moreInCurrentBatch(); }

@@ -17,8 +17,9 @@
 
 #pragma once
 
-#include <boost/thread/condition.hpp>
-#include "mutex.h"
+#include <boost/noncopyable.hpp>
+#include <boost/thread/condition_variable.hpp>
+#include <boost/thread/mutex.hpp>
 
 namespace mongo {
 
@@ -38,21 +39,15 @@ namespace mongo {
         void waitToBeNotified();
 
         /*
-         * Blocks until the method 'notifyOne()' is called or the time interval elapses.
-         * Returns true if notified, false if timeout.
-         */
-        bool timedWaitToBeNotified( int millis );
-
-        /*
          * Notifies the waiter of '*this' that it can proceed.  Can only be called once.
          */
         void notifyOne();
 
     private:
-        mongo::mutex _mutex;          // protects state below
+        boost::mutex _mutex;          // protects state below
         unsigned long long lookFor;
         unsigned long long cur;
-        boost::condition _condition;  // cond over _notified being true
+        boost::condition_variable _condition;  // cond over _notified being true
     };
 
     /** establishes a synchronization point between threads. N threads are waits and one is notifier.
@@ -81,8 +76,8 @@ namespace mongo {
         unsigned nWaiting() const { return _nWaiting; }
 
     private:
-        mongo::mutex _mutex;
-        boost::condition _condition;
+        boost::mutex _mutex;
+        boost::condition_variable _condition;
         When _lastDone;
         When _lastReturned;
         unsigned _nWaiting;

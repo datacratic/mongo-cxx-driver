@@ -15,11 +15,12 @@
  *    limitations under the License.
  */
 
-#include "pch.h"
-
-#include "stringutils.h"
+#include "mongo/util/stringutils.h"
 
 namespace mongo {
+
+    using std::string;
+    using std::vector;
 
     void splitStringDelim( const string& str , vector<string>* res , char delim ) {
         if ( str.empty() )
@@ -107,7 +108,7 @@ namespace mongo {
                                           sd2.rawData() + s2,
                                           len1 );
                         if ( result )
-                            return result;
+                            return ( result > 0) ? 1 : -1;
                     }
 
                     // otherwise, the numbers are equal

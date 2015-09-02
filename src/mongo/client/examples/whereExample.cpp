@@ -16,37 +16,65 @@
  *    limitations under the License.
  */
 
-#include <iostream>
+// It is the responsibility of the mongo client consumer to ensure that any necessary windows
+// headers have already been included before including the driver facade headers.
+#if defined(_WIN32)
+#include <winsock2.h>
+#include <windows.h>
+#endif
 
 #include "mongo/client/dbclient.h"
+
+#include <iostream>
+
+#ifndef verify
+#  define verify(x) MONGO_verify(x)
+#endif
 
 using namespace std;
 using namespace mongo;
 
 int main( int argc, const char **argv ) {
 
-    const char *port = "27017";
-    if ( argc != 1 ) {
-        if ( argc != 3 )
-            throw -12;
-        port = argv[ 2 ];
+    if ( argc > 2 ) {
+        std::cout << "usage: " << argv[0] << " [MONGODB_URI]"  << std::endl;
+        return EXIT_FAILURE;
     }
 
-    DBClientConnection conn;
-    string errmsg;
-    if ( ! conn.connect( string( "127.0.0.1:" ) + port , errmsg ) ) {
+    mongo::client::GlobalInstance instance;
+    if (!instance.initialized()) {
+        std::cout << "failed to initialize the client driver: " << instance.status() << std::endl;
+        return EXIT_FAILURE;
+    }
+
+    std::string uri = argc == 2 ? argv[1] : "mongodb://localhost:27017";
+    std::string errmsg;
+
+    ConnectionString cs = ConnectionString::parse(uri, errmsg);
+
+    if (!cs.isValid()) {
+        std::cout << "Error parsing connection string " << uri << ": " << errmsg << std::endl;
+        return EXIT_FAILURE;
+    }
+
+    boost::scoped_ptr<DBClientBase> conn(cs.connect(errmsg));
+    if ( !conn ) {
         cout << "couldn't connect : " << errmsg << endl;
-        throw -11;
+        return EXIT_FAILURE;
     }
 
     const char * ns = "test.where";
 
-    conn.remove( ns , BSONObj() );
+    conn->remove( ns , BSONObj() );
 
-    conn.insert( ns , BSON( "name" << "eliot" << "num" << 17 ) );
-    conn.insert( ns , BSON( "name" << "sara" << "num" << 24 ) );
+    conn->insert( ns , BSON( "name" << "eliot" << "num" << 17 ) );
+    conn->insert( ns , BSON( "name" << "sara" << "num" << 24 ) );
 
-    auto_ptr<DBClientCursor> cursor = conn.query( ns , BSONObj() );
+    std::auto_ptr<DBClientCursor> cursor = conn->query( ns , BSONObj() );
+    if (!cursor.get()) {
+        cout << "query failure" << endl;
+        return EXIT_FAILURE;
+    }
 
     while ( cursor->more() ) {
         BSONObj obj = cursor->next();
@@ -57,7 +85,11 @@ int main( int argc, const char **argv ) {
 
     Query q = Query("{}").where("this.name == name" , BSON( "name" << "sara" ));
 
-    cursor = conn.query( ns , q );
+    cursor = conn->query( ns , q );
+    if (!cursor.get()) {
+        cout << "query failure" << endl;
+        return EXIT_FAILURE;
+    }
 
     int num = 0;
     while ( cursor->more() ) {
@@ -65,5 +97,7 @@ int main( int argc, const char **argv ) {
         cout << "\t" << obj.jsonString() << endl;
         num++;
     }
-    MONGO_verify( num == 1 );
+    verify( num == 1 );
+
+    return EXIT_SUCCESS;
 }

@@ -1,5 +1,3 @@
-// @file mongo/platform/compiler_gcc.h
-
 /*
  * Copyright 2012 10gen Inc.
  *
@@ -16,56 +14,69 @@
  * limitations under the License.
  */
 
+/**
+ * // TODO: consider splitting out clang specific functionality
+ * Compiler-specific implementations for gcc (and clang).
+ *
+ * Refer to mongo/platform/compiler.h for usage documentation.
+ */
+
 #pragma once
 
-/**
- * Compiler-specific implementations for gcc.
- */
-
-/**
- * Use this to decorate the declaration of functions that will not return.
- *
- * Correct:
- *    MONGO_COMPILER_NORETURN void myAbortFunction();
- */
 #define MONGO_COMPILER_NORETURN __attribute__((__noreturn__))
 
-/**
- * Use this to decorate unused variable declarations.
- */
 #define MONGO_COMPILER_VARIABLE_UNUSED __attribute__((__unused__))
 
-/**
- * Use this on a type declaration to specify its minimum alignment.
- *
- * Alignments should probably always be powers of two.  Also, note that most allocators will not be
- * able to guarantee better than 16- or 32-byte alignment.
- *
- * Correct:
- *    class MONGO_COMPILER_ALIGN_TYPE(16) MyClass {...};
- *
- * Incorrect:
- *    MONGO_COMPILER_ALIGN_TYPE(16) class MyClass {...};
- *    class MyClass{...} MONGO_COMPILER_ALIGN_TYPE(16);
- */
 #define MONGO_COMPILER_ALIGN_TYPE(ALIGNMENT) __attribute__(( __aligned__(ALIGNMENT) ))
 
-/**
- * Use this on a global variable or structure field declaration to specify that it must be allocated
- * at a location that is aligned to a multiple of "ALIGNMENT" bytes.
- *
- * Note that most allocators will not allow heap allocated alignments that are better than 16- or
- * 32-byte aligned.  Stack allocators may only guarantee up to the natural word length worth of
- * alignment.
- *
- * Correct:
- *    class MyClass {
- *        MONGO_COMPILER_ALIGN_VARIABLE(8) char a;
- *    };
- *
- *    MONGO_COMPILER_ALIGN_VARIABLE(8) class MyClass {...} singletonInstance;
- *
- * Incorrect:
- *    int MONGO_COMPILER_ALIGN_VARIABLE(16) a, b;
- */
 #define MONGO_COMPILER_ALIGN_VARIABLE(ALIGNMENT) __attribute__(( __aligned__(ALIGNMENT) ))
+
+// NOTE(schwerin): These visibility and calling-convention macro definitions assume we're not using
+// GCC/CLANG to target native Windows. If/when we decide to do such targeting, we'll need to change
+// compiler flags on Windows to make sure we use an appropriate calling convention, and configure
+// MONGO_COMPILER_API_EXPORT, MONGO_COMPILER_API_IMPORT and MONGO_COMPILER_API_CALLING_CONVENTION
+// correctly.  I believe "correctly" is the following:
+//
+// #ifdef _WIN32
+// #define MONGO_COMIPLER_API_EXPORT __attribute__(( __dllexport__ ))
+// #define MONGO_COMPILER_API_IMPORT __attribute__(( __dllimport__ ))
+// #ifdef _M_IX86
+// #define MONGO_COMPILER_API_CALLING_CONVENTION __attribute__((__cdecl__))
+// #else
+// #define MONGO_COMPILER_API_CALLING_CONVENTION
+// #endif
+// #else ... fall through to the definitions below.
+
+#define MONGO_COMPILER_API_EXPORT __attribute__(( __visibility__("default") ))
+#define MONGO_COMPILER_API_IMPORT
+#define MONGO_COMPILER_API_CALLING_CONVENTION
+
+// old versions of gcc and clang don't accept a message
+#ifdef __clang__
+
+// for compatibility with older versions of clang
+#ifndef __has_extension
+#define __has_extension __has_feature
+#endif
+
+// Technically __attribute__(deprecated) is supposed to come at the end of the declaration, but
+// GCC and clang accept it at the start, which eases compatibility with MSVC
+
+#if __has_extension(attribute_deprecated_with_message)
+#define MONGO_COMPILER_API_DEPRECATED(MSG) __attribute__(( deprecated( MSG ) ))
+#else // older clang doesn't support message
+#define MONGO_COMPILER_API_DEPRECATED(MSG) __attribute__(( deprecated ))
+#endif
+
+#else // we are using GCC
+
+#if __GNUC__ > 4 || ((__GNUC__ == 4) && __GNUC_MINOR > 5) // deprecation messages were added in 4.5
+#define MONGO_COMPILER_API_DEPRECATED(MSG) __attribute__(( deprecated( MSG ) ))
+#else // Older GCC doesn't support message
+#define MONGO_COMPILER_API_DEPRECATED(MSG) __attribute__(( deprecated ))
+#endif
+
+#endif
+
+#define MONGO_likely(x) static_cast<bool>(__builtin_expect(static_cast<bool>(x), 1))
+#define MONGO_unlikely(x) static_cast<bool>(__builtin_expect(static_cast<bool>(x), 0))

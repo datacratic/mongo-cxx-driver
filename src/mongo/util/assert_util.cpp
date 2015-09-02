@@ -15,7 +15,9 @@
  *    limitations under the License.
  */
 
-#include "pch.h"
+#define MONGO_LOG_DEFAULT_COMPONENT ::mongo::logger::LogComponent::kDefault
+
+#include "mongo/platform/basic.h"
 
 #include "mongo/util/assert_util.h"
 
@@ -27,43 +29,15 @@ using namespace std;
 #endif
 
 #include "mongo/bson/bsonobjbuilder.h"
-#include "mongo/db/lasterror.h"
-#include "mongo/util/stacktrace.h"
+#include "mongo/util/debug_util.h"
+#include "mongo/util/log.h"
 
 namespace mongo {
 
-    AssertionCount assertionCount;
-
-    AssertionCount::AssertionCount()
-        : regular(0),warning(0),msg(0),user(0),rollovers(0) {
-    }
-
-    void AssertionCount::rollover() {
-        rollovers++;
-        regular = 0;
-        warning = 0;
-        msg = 0;
-        user = 0;
-    }
-
-    void AssertionCount::condrollover( int newvalue ) {
-        static const int rolloverPoint = ( 1 << 30 );
-        if ( newvalue >= rolloverPoint )
-            rollover();
-    }
-
-    bool DBException::traceExceptions = false;
-
     string DBException::toString() const {
-        stringstream ss; ss << getCode() << " " << what(); return ss.str();
+        stringstream ss;
+        ss << getCode() << " " << what();
         return ss.str();
-    }
-
-    void DBException::traceIfNeeded( const DBException& e ) {
-        if( traceExceptions && ! inShutdown() ){
-            warning() << "DBException thrown" << causedBy( e ) << endl;
-            printStackTrace();
-        }
     }
 
     ErrorCodes::Error DBException::convertExceptionCode(int exCode) {
@@ -82,7 +56,7 @@ namespace mongo {
     }
 
     /* "warning" assert -- safe to continue, so we don't throw exception. */
-    NOINLINE_DECL void wasserted(const char *msg, const char *file, unsigned line) {
+    NOINLINE_DECL void wasserted(const char* expr, const char* file, unsigned line) {
         static bool rateLimited;
         static time_t lastWhen;
         static unsigned lastLine;
@@ -96,47 +70,54 @@ namespace mongo {
         lastWhen = time(0);
         lastLine = line;
 
-        problem() << "warning assertion failure " << msg << ' ' << file << ' ' << dec << line << endl;
+        log() << "warning assertion failure " << expr << ' ' << file << ' ' << dec << line << endl;
         logContext();
-        setLastError(0,msg && *msg ? msg : "wassertion failure");
-        assertionCount.condrollover( ++assertionCount.warning );
-#if defined(_DEBUG) || defined(_DURABLEDEFAULTON) || defined(_DURABLEDEFAULTOFF)
-        // this is so we notice in buildbot
-        log() << "\n\n***aborting after wassert() failure in a debug/test build\n\n" << endl;
-        abort();
-#endif
     }
 
-    NOINLINE_DECL void verifyFailed(const char *msg, const char *file, unsigned line) {
-        assertionCount.condrollover( ++assertionCount.regular );
-        problem() << "Assertion failure " << msg << ' ' << file << ' ' << dec << line << endl;
+    NOINLINE_DECL void verifyFailed(const char *expr, const char *file, unsigned line) {
+        log() << "Assertion failure " << expr << ' ' << file << ' ' << dec << line << endl;
         logContext();
-        setLastError(0,msg && *msg ? msg : "assertion failure");
         stringstream temp;
         temp << "assertion " << file << ":" << line;
         AssertionException e(temp.str(),0);
-        breakpoint();
-#if defined(_DEBUG) || defined(_DURABLEDEFAULTON) || defined(_DURABLEDEFAULTOFF)
-        // this is so we notice in buildbot
-        log() << "\n\n***aborting after verify() failure as this is a debug/test build\n\n" << endl;
-        abort();
-#endif
         throw e;
     }
 
-    NOINLINE_DECL void fassertFailed( int msgid ) {
-        problem() << "Fatal Assertion " << msgid << endl;
+    NOINLINE_DECL void invariantFailed(const char* expr, const char* file, unsigned line) {
+        log() << "Invariant failure " << expr << ' ' << file << ' ' << dec << line << endl;
         logContext();
-        breakpoint();
+        log() << "\n\n***aborting after invariant() failure\n\n" << endl;
+        abort();
+    }
+
+    NOINLINE_DECL void invariantOKFailed(const char* expr, const Status& status, const char *file,
+                                         unsigned line) {
+        log() << "Invariant failure: " << expr << " resulted in status " << status
+              << " at " << file << ' ' << dec << line;
+        logContext();
+        log() << "\n\n***aborting after invariant() failure\n\n" << endl;
+        abort();
+    }
+
+    NOINLINE_DECL void fassertFailed( int msgid ) {
+        log() << "Fatal Assertion " << msgid << endl;
+        logContext();
         log() << "\n\n***aborting after fassert() failure\n\n" << endl;
         abort();
     }
 
-    NOINLINE_DECL void fassertFailedNoTrace( int msgid ) {
-        problem() << "Fatal Assertion " << msgid << endl;
-        breakpoint();
+    MONGO_COMPILER_NORETURN void fassertFailedWithStatus(int msgid, const Status& status) {
+        log() << "Fatal assertion " <<  msgid << " " << status;
+        logContext();
         log() << "\n\n***aborting after fassert() failure\n\n" << endl;
-        ::_exit(EXIT_ABRUPT); // bypass our handler for SIGABRT, which prints a stack trace.
+        abort();
+    }
+
+    MONGO_COMPILER_NORETURN void fassertFailedWithStatusNoTrace(int msgid, const Status& status) {
+        log() << "Fatal assertion " <<  msgid << " " << status;
+        logContext();
+        log() << "\n\n***aborting after fassert() failure\n\n" << endl;
+        abort();
     }
 
     void uasserted(int msgid , const string &msg) {
@@ -147,9 +128,7 @@ namespace mongo {
     void MsgAssertionException::appendPrefix( stringstream& ss ) const { ss << "massert:"; }
 
     NOINLINE_DECL void uasserted(int msgid, const char *msg) {
-        assertionCount.condrollover( ++assertionCount.user );
         LOG(1) << "User Assertion: " << msgid << ":" << msg << endl;
-        setLastError(msgid,msg);
         throw UserException(msgid, msg);
     }
 
@@ -158,27 +137,42 @@ namespace mongo {
     }
 
     NOINLINE_DECL void msgasserted(int msgid, const char *msg) {
-        assertionCount.condrollover( ++assertionCount.warning );
         log() << "Assertion: " << msgid << ":" << msg << endl;
-        setLastError(msgid,msg && *msg ? msg : "massert failure");
-        //breakpoint();
         logContext();
         throw MsgAssertionException(msgid, msg);
     }
 
     NOINLINE_DECL void msgassertedNoTrace(int msgid, const char *msg) {
-        assertionCount.condrollover( ++assertionCount.warning );
         log() << "Assertion: " << msgid << ":" << msg << endl;
-        setLastError(msgid,msg && *msg ? msg : "massert failure");
         throw MsgAssertionException(msgid, msg);
     }
 
-    NOINLINE_DECL void streamNotGood( int code , const std::string& msg , std::ios& myios ) {
-        stringstream ss;
-        // errno might not work on all systems for streams
-        // if it doesn't for a system should deal with here
-        ss << msg << " stream invalid: " << errnoWithDescription();
-        throw UserException( code , ss.str() );
+    void msgassertedNoTrace(int msgid, const std::string& msg) {
+        msgassertedNoTrace(msgid, msg.c_str());
+    }
+
+    std::string causedBy( const char* e ) {
+        return std::string(" :: caused by :: ") + e;
+    }
+
+    std::string causedBy( const DBException& e ){
+        return causedBy( e.toString() );
+    }
+
+    std::string causedBy( const std::exception& e ) {
+        return causedBy( e.what() );
+    }
+
+    std::string causedBy( const std::string& e ){
+        return causedBy( e.c_str() );
+    }
+
+    std::string causedBy( const std::string* e ) {
+        return (e && *e != "") ? causedBy(*e) : "";
+    }
+
+    std::string causedBy( const Status& e ){
+        return causedBy( e.reason() );
     }
 
     string errnoWithPrefix( const char * prefix ) {

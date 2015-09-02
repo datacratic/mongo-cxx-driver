@@ -15,7 +15,7 @@
  *    limitations under the License.
  */
 
-#include "mongo/pch.h"
+#include "mongo/platform/basic.h"
 
 #include "mongo/util/net/message.h"
 
@@ -23,8 +23,6 @@
 #include <errno.h>
 #include <time.h>
 
-#include "mongo/util/goodies.h"
-#include "mongo/util/net/listen.h"
 #include "mongo/util/net/message_port.h"
 
 namespace mongo {
@@ -34,14 +32,14 @@ namespace mongo {
             return;
         }
         if ( _buf != 0 ) {
-            p.send( (char*)_buf, _buf->len, context );
+            p.send( _buf, MsgData::ConstView(_buf).getLen(), context );
         }
         else {
             p.send( _data, context );
         }
     }
 
-    MSGID NextMsgId;
+    AtomicWord<MSGID> NextMsgId;
 
     /*struct MsgStart {
         MsgStart() {
@@ -51,8 +49,7 @@ namespace mongo {
     } msgstart;*/
 
     MSGID nextMessageId() {
-        MSGID msgid = NextMsgId++;
-        return msgid;
+        return NextMsgId.fetchAndAdd(1);
     }
 
     bool doesOpGetAResponse( int op ) {

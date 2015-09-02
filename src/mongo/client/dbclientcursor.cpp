@@ -15,34 +15,76 @@
  *    limitations under the License.
  */
 
-#include "pch.h"
+#define MONGO_LOG_DEFAULT_COMPONENT ::mongo::logger::LogComponent::kNetwork
+
+#include "mongo/platform/basic.h"
 
 #include "mongo/client/dbclientcursor.h"
 
-#include "mongo/client/connpool.h"
-#include "mongo/db/cmdline.h"
 #include "mongo/db/dbmessage.h"
-#include "mongo/db/namespacestring.h"
-#include "mongo/s/shard.h"
-#include "mongo/s/stale_exception.h"  // for RecvStaleConfigException
+#include "mongo/db/namespace_string.h"
+#include "mongo/util/debug_util.h"
+#include "mongo/client/dbclientcursorshim.h"
+#include "mongo/util/log.h"
 
 namespace mongo {
+
+    using std::auto_ptr;
+    using std::endl;
+    using std::string;
+    using std::vector;
+
+    DBClientCursor::DBClientCursor( DBClientBase* client, const std::string &_ns, BSONObj _query, int _nToReturn,
+                    int _nToSkip, const BSONObj *_fieldsToReturn, int queryOptions , int bs ) :
+        _client(client),
+        ns(_ns),
+        query(_query),
+        nToReturn( (queryOptions & QueryOption_CursorTailable) ? 0 : _nToReturn ),
+        nToSkip(_nToSkip),
+        nReturned(0),
+        fieldsToReturn(_fieldsToReturn),
+        opts(queryOptions),
+        batchSize(bs==1?2:bs),
+        resultFlags(0),
+        cursorId(),
+        _ownCursor( true ),
+        wasError( false ) {
+        _finishConsInit();
+    }
+
+    DBClientCursor::DBClientCursor( DBClientBase* client, const std::string &_ns, long long _cursorId, int _nToReturn, int options, int bs ) :
+        _client(client),
+        ns(_ns),
+        nToReturn( (options & QueryOption_CursorTailable) ? 0 : _nToReturn ),
+        nToSkip(0),
+        nReturned(0),
+        fieldsToReturn(0),
+        opts( options ),
+        batchSize(bs==1?2:bs),
+        resultFlags(0),
+        cursorId(_cursorId),
+        _ownCursor(true),
+        wasError(false) {
+        _finishConsInit();
+    }
 
     void assembleRequest( const string &ns, BSONObj query, int nToReturn, int nToSkip, const BSONObj *fieldsToReturn, int queryOptions, Message &toSend );
 
     void DBClientCursor::_finishConsInit() {
-        _originalHost = _client->toString();
+        _originalHost = _client->getServerAddress();
     }
 
     int DBClientCursor::nextBatchSize() {
+        if (nToReturn) {
+            int remaining = nToReturn - nReturned;
 
-        if ( nToReturn == 0 )
-            return batchSize;
+            if (batchSize && batchSize < remaining)
+                return batchSize;
 
-        if ( batchSize == 0 )
-            return nToReturn;
+            return -remaining;
+        }
 
-        return batchSize < nToReturn ? batchSize : nToReturn;
+        return batchSize;
     }
 
     void DBClientCursor::_assembleInit( Message& toSend ) {
@@ -53,7 +95,7 @@ namespace mongo {
             BufBuilder b;
             b.appendNum( opts );
             b.appendStr( ns );
-            b.appendNum( nToReturn );
+            b.appendNum( nextBatchSize() );
             b.appendNum( cursorId );
             toSend.setData( dbGetMore, b.buf(), b.len() );
         }
@@ -62,7 +104,7 @@ namespace mongo {
     bool DBClientCursor::init() {
         Message toSend;
         _assembleInit( toSend );
-        verify( _client );
+
         if ( !_client->call( toSend, *batch.m, false, &_originalHost ) ) {
             // log msg temp?
             log() << "DBClientCursor::init call() failed" << endl;
@@ -79,6 +121,15 @@ namespace mongo {
     
     void DBClientCursor::initLazy( bool isRetry ) {
         massert( 15875 , "DBClientCursor::initLazy called on a client that doesn't support lazy" , _client->lazySupported() );
+        if (DBClientWithCommands::RunCommandHookFunc hook = _client->getRunCommandHook()) {
+            if (NamespaceString(ns).isCommand()) {
+                BSONObjBuilder bob;
+                bob.appendElements(query);
+                hook(&bob);
+                query = bob.obj();
+            }
+        }
+        
         Message toSend;
         _assembleInit( toSend );
         _client->say( toSend, isRetry, &_originalHost );
@@ -103,6 +154,14 @@ namespace mongo {
         }
 
         dataReceived( retry, _lazyHost );
+
+        if (DBClientWithCommands::PostRunCommandHookFunc hook = _client->getPostRunCommandHook()) {
+            if (NamespaceString(ns).isCommand()) {
+                BSONObj cmdResponse = peekFirst();
+                hook(cmdResponse, _lazyHost);
+            }
+        }
+
         return ! retry;
     }
 
@@ -119,10 +178,6 @@ namespace mongo {
     void DBClientCursor::requestMore() {
         verify( cursorId && batch.pos == batch.nReturned );
 
-        if (haveLimit) {
-            nToReturn -= batch.nReturned;
-            verify(nToReturn > 0);
-        }
         BufBuilder b;
         b.appendNum(opts);
         b.appendStr(ns);
@@ -133,29 +188,16 @@ namespace mongo {
         toSend.setData(dbGetMore, b.buf(), b.len());
         auto_ptr<Message> response(new Message());
 
-        if ( _client ) {
-            _client->call( toSend, *response );
-            this->batch.m = response;
-            dataReceived();
-        }
-        else {
-            verify( _scopedHost.size() );
-            ScopedDbConnection conn(_scopedHost);
-            conn->call( toSend , *response );
-            _client = conn.get();
-            this->batch.m = response;
-            dataReceived();
-            _client = 0;
-            conn.done();
-        }
+        _client->call( toSend, *response );
+        this->batch.m = response;
+        dataReceived();
     }
 
     /** with QueryOption_Exhaust, the server just blasts data at us (marked at end with cursorid==0). */
     void DBClientCursor::exhaustReceiveMore() {
         verify( cursorId && batch.pos == batch.nReturned );
-        verify( !haveLimit );
+        verify( !nToReturn );
         auto_ptr<Message> response(new Message());
-        verify( _client );
         if (!_client->recv(*response)) {
             uasserted(16465, "recv failed while exhausting cursor");
         }
@@ -165,16 +207,16 @@ namespace mongo {
 
     void DBClientCursor::dataReceived( bool& retry, string& host ) {
 
-        QueryResult *qr = (QueryResult *) batch.m->singleData();
-        resultFlags = qr->resultFlags();
+        QueryResult::View qr = batch.m->singleData().view2ptr();
+        resultFlags = qr.getResultFlags();
 
-        if ( qr->resultFlags() & ResultFlag_ErrSet ) {
+        if ( qr.getResultFlags() & ResultFlag_ErrSet ) {
             wasError = true;
         }
 
-        if ( qr->resultFlags() & ResultFlag_CursorNotFound ) {
+        if ( qr.getResultFlags() & ResultFlag_CursorNotFound ) {
             // cursor id no longer valid at the server.
-            verify( qr->cursorId == 0 );
+            verify( qr.getCursorId() == 0 );
             cursorId = 0; // 0 indicates no longer valid (dead)
             if ( ! ( opts & QueryOption_CursorTailable ) )
                 throw UserException( 13127 , "getMore: cursor didn't exist on server, possible restart or timeout?" );
@@ -183,20 +225,14 @@ namespace mongo {
         if ( cursorId == 0 || ! ( opts & QueryOption_CursorTailable ) ) {
             // only set initially: we don't want to kill it on end of data
             // if it's a tailable cursor
-            cursorId = qr->cursorId;
+            cursorId = qr.getCursorId();
         }
 
-        batch.nReturned = qr->nReturned;
+        batch.nReturned = qr.getNReturned();
         batch.pos = 0;
-        batch.data = qr->data();
+        batch.data = qr.data();
 
         _client->checkResponse( batch.data, batch.nReturned, &retry, &host ); // watches for "not master"
-
-        if( qr->resultFlags() & ResultFlag_ShardConfigStale ) {
-            BSONObj error;
-            verify( peekError( &error ) );
-            throw RecvStaleConfigException( (string)"stale config on lazy receive" + causedBy( getErrField( error ) ), error );
-        }
 
         /* this assert would fire the way we currently work:
             verify( nReturned || cursorId == 0 );
@@ -204,13 +240,10 @@ namespace mongo {
     }
 
     /** If true, safe to call next().  Requests more from server if necessary. */
-    bool DBClientCursor::more() {
-        _assertIfNull();
+    bool DBClientCursor::rawMore() {
+        DEV _assertIfNull();
 
-        if ( !_putBack.empty() )
-            return true;
-
-        if (haveLimit && batch.pos >= nToReturn)
+        if (nToReturn && nReturned >= nToReturn)
             return false;
 
         if ( batch.pos < batch.nReturned )
@@ -223,13 +256,20 @@ namespace mongo {
         return batch.pos < batch.nReturned;
     }
 
-    BSONObj DBClientCursor::next() {
+    bool DBClientCursor::more() {
         DEV _assertIfNull();
-        if ( !_putBack.empty() ) {
-            BSONObj ret = _putBack.top();
-            _putBack.pop();
-            return ret;
-        }
+
+        if ( !_putBack.empty() )
+            return true;
+
+        if (shim.get())
+            return shim->more();
+
+        return rawMore();
+    }
+
+    BSONObj DBClientCursor::rawNext() {
+        DEV _assertIfNull();
 
         uassert(13422, "DBClientCursor next() called but more() is false", batch.pos < batch.nReturned);
 
@@ -237,6 +277,33 @@ namespace mongo {
         BSONObj o(batch.data);
         batch.data += o.objsize();
         /* todo would be good to make data null at end of batch for safety */
+        return o;
+    }
+
+    BSONObj DBClientCursor::next() {
+        DEV _assertIfNull();
+
+        nReturned++;
+
+        if ( !_putBack.empty() ) {
+            BSONObj ret = _putBack.top();
+            _putBack.pop();
+            return ret;
+        }
+
+        if (shim.get())
+            return shim->next();
+
+        return rawNext();
+    }
+
+    BSONObj DBClientCursor::nextSafe() {
+        BSONObj o = next();
+        if( this->wasError && strcmp(o.firstElementFieldName(), "$err") == 0 ) {
+            std::string s = "nextSafe(): " + o.toString();
+            LOG(5) << s;
+            uasserted(13106, s);
+        }
         return o;
     }
 
@@ -285,36 +352,10 @@ namespace mongo {
         return true;
     }
 
-    void DBClientCursor::attach( AScopedConnection * conn ) {
-        verify( _scopedHost.size() == 0 );
-        verify( conn );
-        verify( conn->get() );
-
-        if ( conn->get()->type() == ConnectionString::SET ||
-             conn->get()->type() == ConnectionString::SYNC ) {
-            if( _lazyHost.size() > 0 )
-                _scopedHost = _lazyHost;
-            else if( _client )
-                _scopedHost = _client->getServerAddress();
-            else
-                massert(14821, "No client or lazy client specified, cannot store multi-host connection.", false);
-        }
-        else {
-            _scopedHost = conn->getHost();
-        }
-
-        conn->done();
-        _client = 0;
-        _lazyHost = "";
-    }
-
     DBClientCursor::~DBClientCursor() {
-        if (!this)
-            return;
-
         DESTRUCTOR_GUARD (
 
-        if ( cursorId && _ownCursor && ! inShutdown() ) {
+        if ( cursorId && _ownCursor ) {
             BufBuilder b;
             b.appendNum( (int)0 ); // reserved
             b.appendNum( (int)1 ); // number
@@ -323,26 +364,11 @@ namespace mongo {
             Message m;
             m.setData( dbKillCursors , b.buf() , b.len() );
 
-            if ( _client ) {
-
-                // Kill the cursor the same way the connection itself would.  Usually, non-lazily
-                if( DBClientConnection::getLazyKillCursor() )
-                    _client->sayPiggyBack( m );
-                else
-                    _client->say( m );
-
-            }
-            else {
-                verify( _scopedHost.size() );
-                ScopedDbConnection conn(_scopedHost);
-
-                if( DBClientConnection::getLazyKillCursor() )
-                    conn->sayPiggyBack( m );
-                else
-                    conn->say( m );
-
-                conn.done();
-            }
+            // Kill the cursor the same way the connection itself would.  Usually, non-lazily
+            if( DBClientConnection::getLazyKillCursor() )
+                _client->sayPiggyBack( m );
+            else
+                _client->say( m );
         }
 
         );

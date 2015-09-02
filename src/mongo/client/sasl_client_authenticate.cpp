@@ -13,6 +13,8 @@
  *    limitations under the License.
  */
 
+#include "mongo/platform/basic.h"
+
 #include "mongo/client/sasl_client_authenticate.h"
 
 #include <string>
@@ -40,8 +42,8 @@ namespace mongo {
     const char* const saslCommandMechanismListFieldName = "supportedMechanisms";
     const char* const saslCommandPasswordFieldName = "pwd";
     const char* const saslCommandPayloadFieldName = "payload";
-    const char* const saslCommandPrincipalFieldName = "user";
-    const char* const saslCommandPrincipalSourceFieldName = "userSource";
+    const char* const saslCommandUserDBFieldName = "db";
+    const char* const saslCommandUserFieldName = "user";
     const char* const saslCommandServiceHostnameFieldName = "serviceHostname";
     const char* const saslCommandServiceNameFieldName = "serviceName";
     const char* const saslCommandDigestPasswordFieldName = "digestPassword";

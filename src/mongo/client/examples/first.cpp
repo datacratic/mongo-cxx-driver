@@ -19,19 +19,27 @@
  * this is a good first example of how to use mongo from c++
  */
 
-#include <iostream>
-#include <cstdlib>
+// It is the responsibility of the mongo client consumer to ensure that any necessary windows
+// headers have already been included before including the driver facade headers.
+#if defined(_WIN32)
+#include <winsock2.h>
+#include <windows.h>
+#endif
 
 #include "mongo/client/dbclient.h"
 
-using namespace std;
+#include <iostream>
+#include <cstdlib>
 
-void insert( mongo::DBClientConnection & conn , const char * name , int num ) {
-    mongo::BSONObjBuilder obj;
+using namespace std;
+using namespace mongo;
+
+void insert( DBClientBase* conn , const char * name , int num ) {
+    BSONObjBuilder obj;
     obj.append( "name" , name );
     obj.append( "num" , num );
-    conn.insert( "test.people" , obj.obj() );
-    std::string e = conn.getLastError();
+    conn->insert( "test.people" , obj.obj() );
+    std::string e = conn->getLastError();
     if( !e.empty() ) {
         cout << "insert failed: " << e << endl;
         exit(EXIT_FAILURE);
@@ -40,34 +48,45 @@ void insert( mongo::DBClientConnection & conn , const char * name , int num ) {
 
 int main( int argc, const char **argv ) {
 
-    const char *port = "27017";
-    if ( argc != 1 ) {
-        if ( argc != 3 ) {
-            cout << "need to pass port as second param" << endl;
-            return EXIT_FAILURE;
-        }
-        port = argv[ 2 ];
+    if ( argc > 2 ) {
+        std::cout << "usage: " << argv[0] << " [MONGODB_URI]"  << std::endl;
+        return EXIT_FAILURE;
     }
 
-    mongo::DBClientConnection conn;
-    string errmsg;
-    if ( ! conn.connect( string( "127.0.0.1:" ) + port , errmsg ) ) {
+    client::GlobalInstance instance;
+    if (!instance.initialized()) {
+        std::cout << "failed to initialize the client driver: " << instance.status() << std::endl;
+        return EXIT_FAILURE;
+    }
+
+    std::string uri = argc == 2 ? argv[1] : "mongodb://localhost:27017";
+    std::string errmsg;
+
+    ConnectionString cs = ConnectionString::parse(uri, errmsg);
+
+    if (!cs.isValid()) {
+        std::cout << "Error parsing connection string " << uri << ": " << errmsg << std::endl;
+        return EXIT_FAILURE;
+    }
+
+    boost::scoped_ptr<DBClientBase> conn(cs.connect(errmsg));
+    if ( !conn ) {
         cout << "couldn't connect : " << errmsg << endl;
         return EXIT_FAILURE;
     }
 
     {
         // clean up old data from any previous tests
-        mongo::BSONObjBuilder query;
-        conn.remove( "test.people" , query.obj() );
+        BSONObjBuilder query;
+        conn->remove( "test.people" , query.obj() );
     }
 
-    insert( conn , "eliot" , 15 );
-    insert( conn , "sara" , 23 );
+    insert( conn.get() , "eliot" , 15 );
+    insert( conn.get() , "sara" , 23 );
 
     {
         mongo::BSONObjBuilder query;
-        auto_ptr<mongo::DBClientCursor> cursor = conn.query( "test.people" , query.obj() );
+        std::auto_ptr<mongo::DBClientCursor> cursor = conn->query( "test.people" , query.obj() );
         if (!cursor.get()) {
             cout << "query failure" << endl;
             return EXIT_FAILURE;
@@ -84,15 +103,16 @@ int main( int argc, const char **argv ) {
     {
         mongo::BSONObjBuilder query;
         query.append( "name" , "eliot" );
-        mongo::BSONObj res = conn.findOne( "test.people" , query.obj() );
+        mongo::BSONObj res = conn->findOne( "test.people" , query.obj() );
         cout << res.isEmpty() << "\t" << res.jsonString() << endl;
     }
 
     {
         mongo::BSONObjBuilder query;
         query.append( "name" , "asd" );
-        mongo::BSONObj res = conn.findOne( "test.people" , query.obj() );
+        mongo::BSONObj res = conn->findOne( "test.people" , query.obj() );
         cout << res.isEmpty() << "\t" << res.jsonString() << endl;
     }
 
+    return EXIT_SUCCESS;
 }

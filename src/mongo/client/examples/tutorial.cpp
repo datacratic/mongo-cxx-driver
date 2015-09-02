@@ -15,56 +15,102 @@
  *    limitations under the License.
  */
 
-#include <iostream>
+// It is the responsibility of the mongo client consumer to ensure that any necessary windows
+// headers have already been included before including the driver facade headers.
+#if defined(_WIN32)
+#include <winsock2.h>
+#include <windows.h>
+#endif
+
 #include "mongo/client/dbclient.h"
 
-// g++ src/mongo/client/examples/tutorial.cpp -pthread -Isrc -Isrc/mongo -lmongoclient -lboost_thread-mt -lboost_system -lboost_filesystem -L[path to libmongoclient.a] -o tutorial
-//g++ tutorial.cpp -L[mongo directory] -L/opt/local/lib -lmongoclient -lboost_thread-mt -lboost_filesystem -lboost_system -I/opt/local/include  -o tutorial
+#include <iostream>
 
+using namespace std;
 using namespace mongo;
 
-void printIfAge(DBClientConnection& c, int age) {
-    auto_ptr<DBClientCursor> cursor = c.query("tutorial.persons", QUERY( "age" << age ).sort("name") );
+int printIfAge(DBClientBase* conn, int age) {
+    std::auto_ptr<DBClientCursor> cursor = conn->query("tutorial.persons", MONGO_QUERY( "age" << age ).sort("name") );
+    if (!cursor.get()) {
+        cout << "query failure" << endl;
+        return EXIT_FAILURE;
+    }
+
     while( cursor->more() ) {
         BSONObj p = cursor->next();
         cout << p.getStringField("name") << endl;
     }
+    return EXIT_SUCCESS;
 }
 
-void run() {
-    DBClientConnection c;
-    c.connect("localhost"); //"192.168.58.1");
+int run(DBClientBase* conn) {
+
     cout << "connected ok" << endl;
     BSONObj p = BSON( "name" << "Joe" << "age" << 33 );
-    c.insert("tutorial.persons", p);
+    conn->insert("tutorial.persons", p);
     p = BSON( "name" << "Jane" << "age" << 40 );
-    c.insert("tutorial.persons", p);
+    conn->insert("tutorial.persons", p);
     p = BSON( "name" << "Abe" << "age" << 33 );
-    c.insert("tutorial.persons", p);
+    conn->insert("tutorial.persons", p);
     p = BSON( "name" << "Methuselah" << "age" << BSONNULL);
-    c.insert("tutorial.persons", p);
+    conn->insert("tutorial.persons", p);
     p = BSON( "name" << "Samantha" << "age" << 21 << "city" << "Los Angeles" << "state" << "CA" );
-    c.insert("tutorial.persons", p);
+    conn->insert("tutorial.persons", p);
 
-    c.ensureIndex("tutorial.persons", fromjson("{age:1}"));
+    conn->createIndex("tutorial.persons", fromjson("{age:1}"));
 
-    cout << "count:" << c.count("tutorial.persons") << endl;
+    cout << "count:" << conn->count("tutorial.persons") << endl;
 
-    auto_ptr<DBClientCursor> cursor = c.query("tutorial.persons", BSONObj());
+    std::auto_ptr<DBClientCursor> cursor = conn->query("tutorial.persons", BSONObj());
+    if (!cursor.get()) {
+        cout << "query failure" << endl;
+        return EXIT_FAILURE;
+    }
+
     while( cursor->more() ) {
         cout << cursor->next().toString() << endl;
     }
 
     cout << "\nprintifage:\n";
-    printIfAge(c, 33);
+    return printIfAge(conn, 33);
 }
 
-int main() {
+int main(int argc, char* argv[]) {
+
+    if ( argc > 2 ) {
+        std::cout << "usage: " << argv[0] << " [MONGODB_URI]"  << std::endl;
+        return EXIT_FAILURE;
+    }
+
+    mongo::client::GlobalInstance instance;
+    if (!instance.initialized()) {
+        std::cout << "failed to initialize the client driver: " << instance.status() << std::endl;
+        return EXIT_FAILURE;
+    }
+
+    std::string uri = argc == 2 ? argv[1] : "mongodb://localhost:27017";
+    std::string errmsg;
+
+    ConnectionString cs = ConnectionString::parse(uri, errmsg);
+
+    if (!cs.isValid()) {
+        std::cout << "Error parsing connection string " << uri << ": " << errmsg << std::endl;
+        return EXIT_FAILURE;
+    }
+
+    boost::scoped_ptr<DBClientBase> conn(cs.connect(errmsg));
+    if ( !conn ) {
+        cout << "couldn't connect : " << errmsg << endl;
+        return EXIT_FAILURE;
+    }
+
+    int ret = EXIT_SUCCESS;
     try {
-        run();
+        ret = run(conn.get());
     }
     catch( DBException &e ) {
         cout << "caught " << e.what() << endl;
+        ret = EXIT_FAILURE;
     }
-    return 0;
+    return ret;
 }

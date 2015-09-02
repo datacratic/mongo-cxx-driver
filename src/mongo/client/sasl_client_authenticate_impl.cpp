@@ -20,6 +20,10 @@
  * The primary entry point at runtime is saslClientAuthenticateImpl().
  */
 
+#define MONGO_LOG_DEFAULT_COMPONENT ::mongo::logger::LogComponent::kNetwork
+
+#include "mongo/platform/basic.h"
+
 #include <boost/scoped_ptr.hpp>
 #include <string>
 
@@ -34,8 +38,12 @@
 #include "mongo/util/log.h"
 #include "mongo/util/mongoutils/str.h"
 #include "mongo/util/net/hostandport.h"
+#include "mongo/util/password_digest.h"
 
 namespace mongo {
+
+    using std::endl;
+
 namespace {
 
     // Default log level on the client for SASL log messages.
@@ -57,15 +65,14 @@ namespace {
      * Gets the password data from "saslParameters" and stores it to "outPassword".
      *
      * If "digestPassword" indicates that the password needs to be "digested" via
-     * DBClientWithCommands::createPasswordDigest(), this method takes care of that.
+     * mongo::createPasswordDigest(), this method takes care of that.
      * On success, the value of "*outPassword" is always the correct value to set
      * as the password on the SaslClientSession.
      *
      * Returns Status::OK() on success, and ErrorCodes::NoSuchKey if the password data is not
      * present in "saslParameters".  Other ErrorCodes returned indicate other errors.
      */
-    Status extractPassword(DBClientWithCommands* client,
-                           const BSONObj& saslParameters,
+    Status extractPassword(const BSONObj& saslParameters,
                            bool digestPassword,
                            std::string* outPassword) {
 
@@ -79,12 +86,12 @@ namespace {
         if (digestPassword) {
             std::string user;
             status = bsonExtractStringField(saslParameters,
-                                            saslCommandPrincipalFieldName,
+                                            saslCommandUserFieldName,
                                             &user);
             if (!status.isOK())
                 return status;
 
-            *outPassword = client->createPasswordDigest(user, rawPassword);
+            *outPassword = mongo::createPasswordDigest(user, rawPassword);
         }
         else {
             *outPassword = rawPassword;
@@ -131,13 +138,15 @@ namespace {
         session->setParameter(SaslClientSession::parameterServiceHostname, value);
 
         status = bsonExtractStringField(saslParameters,
-                                        saslCommandPrincipalFieldName,
+                                        saslCommandUserFieldName,
                                         &value);
         if (!status.isOK())
             return status;
         session->setParameter(SaslClientSession::parameterUser, value);
 
-        bool digestPasswordDefault = !(targetDatabase == "$external" && mechanism == "PLAIN");
+        bool digestPasswordDefault =
+            !(targetDatabase == "$external" && mechanism == "PLAIN") &&
+            !(targetDatabase == "$external" && mechanism == "GSSAPI");
         bool digestPassword;
         status = bsonExtractBooleanFieldWithDefault(saslParameters,
                                                     saslCommandDigestPasswordFieldName,
@@ -146,11 +155,12 @@ namespace {
         if (!status.isOK())
             return status;
 
-        status = extractPassword(client, saslParameters, digestPassword, &value);
+        status = extractPassword(saslParameters, digestPassword, &value);
         if (status.isOK()) {
             session->setParameter(SaslClientSession::parameterPassword, value);
         }
-        else if (status != ErrorCodes::NoSuchKey) {
+        else if (!(status == ErrorCodes::NoSuchKey && targetDatabase == "$external")) {
+            // $external users do not have passwords, hence NoSuchKey is expected
             return status;
         }
 
@@ -168,7 +178,7 @@ namespace {
         std::string targetDatabase;
         try {
             Status status = bsonExtractStringFieldWithDefault(saslParameters,
-                                                              saslCommandPrincipalSourceFieldName,
+                                                              saslCommandUserDBFieldName,
                                                               saslDefaultDBName,
                                                               &targetDatabase);
             if (!status.isOK())
@@ -177,21 +187,30 @@ namespace {
             return ex.toStatus();
         }
 
-        SaslClientSession session;
-        Status status = configureSession(&session, client, targetDatabase, saslParameters);
+        std::string mechanism;
+        Status status = bsonExtractStringField(saslParameters, 
+                                               saslCommandMechanismFieldName,
+                                               &mechanism);
+        if(!status.isOK()) {
+            return status;
+        }
+
+        boost::scoped_ptr<SaslClientSession> session(SaslClientSession::create(mechanism));
+        status = configureSession(session.get(), client, targetDatabase, saslParameters);
+       
         if (!status.isOK())
             return status;
 
         BSONObj saslFirstCommandPrefix = BSON(
                 saslStartCommandName << 1 <<
                 saslCommandMechanismFieldName <<
-                session.getParameter(SaslClientSession::parameterMechanism));
+                session->getParameter(SaslClientSession::parameterMechanism));
 
         BSONObj saslFollowupCommandPrefix = BSON(saslContinueCommandName << 1);
         BSONObj saslCommandPrefix = saslFirstCommandPrefix;
         BSONObj inputObj = BSON(saslCommandPayloadFieldName << "");
         bool isServerDone = false;
-        while (!session.isDone()) {
+        while (!session->isDone()) {
             std::string payload;
             BSONType type;
 
@@ -202,7 +221,7 @@ namespace {
             LOG(saslLogLevel) << "sasl client input: " << base64::encode(payload) << endl;
 
             std::string responsePayload;
-            status = session.step(payload, &responsePayload);
+            status = session->step(payload, &responsePayload);
             if (!status.isOK())
                 return status;
 
@@ -249,3 +268,5 @@ namespace {
 
 }  // namespace
 }  // namespace mongo
+
+MONGO_INITIALIZER_FUNCTION_ASSURE_FILE(client_sasl_client_authenticate_impl)

@@ -17,7 +17,8 @@
 
 #pragma once
 
-#include "dbclientcursor.h"
+#include "mongo/client/dbclientcursor.h"
+#include "mongo/client/export_macros.h"
 
 namespace mongo {
 

@@ -15,25 +15,48 @@
  *    limitations under the License.
  */
 
-#include <iostream>
+// It is the responsibility of the mongo client consumer to ensure that any necessary windows
+// headers have already been included before including the driver facade headers.
+#if defined(_WIN32)
+#include <winsock2.h>
+#include <windows.h>
+#endif
 
 #include "mongo/client/dbclient.h"
+
+#include <iostream>
 
 using namespace std;
 using namespace mongo;
 
 int main( int argc, const char **argv ) {
 
-    const char *port = "27017";
-    if ( argc != 1 ) {
-        if ( argc != 3 ) {
-            cout << "need to pass port as second param" << endl;
-            return EXIT_FAILURE;
-        }
-        port = argv[ 2 ];
+    if ( argc > 2 ) {
+        std::cout << "usage: " << argv[0] << " [MONGODB_URI]"  << std::endl;
+        return EXIT_FAILURE;
     }
 
-    ScopedDbConnection conn(string( "127.0.0.1:" ) + port);
+    mongo::client::GlobalInstance instance;
+    if (!instance.initialized()) {
+        std::cout << "failed to initialize the client driver: " << instance.status() << std::endl;
+        return EXIT_FAILURE;
+    }
+
+    std::string uri = argc == 2 ? argv[1] : "mongodb://localhost:27017";
+    std::string errmsg;
+
+    ConnectionString cs = ConnectionString::parse(uri, errmsg);
+
+    if (!cs.isValid()) {
+        std::cout << "Error parsing connection string " << uri << ": " << errmsg << std::endl;
+        return EXIT_FAILURE;
+    }
+
+    boost::scoped_ptr<DBClientBase> conn(cs.connect(errmsg));
+    if ( !conn ) {
+        cout << "couldn't connect : " << errmsg << endl;
+        return EXIT_FAILURE;
+    }
 
     const char * ns = "test.second";
 
@@ -43,13 +66,19 @@ int main( int argc, const char **argv ) {
     conn->insert( ns , BSON( "name" << "sara" << "num" << 24 ) );
 
     std::auto_ptr<DBClientCursor> cursor = conn->query( ns , BSONObj() );
+
+    if (!cursor.get()) {
+        cout << "query failure" << endl;
+        return EXIT_FAILURE;
+    }
+
     cout << "using cursor" << endl;
     while ( cursor->more() ) {
         BSONObj obj = cursor->next();
         cout << "\t" << obj.jsonString() << endl;
     }
 
-    conn->ensureIndex( ns , BSON( "name" << 1 << "num" << -1 ) );
+    conn->createIndex( ns , BSON( "name" << 1 << "num" << -1 ) );
 
-    conn.done();
+    return EXIT_SUCCESS;
 }

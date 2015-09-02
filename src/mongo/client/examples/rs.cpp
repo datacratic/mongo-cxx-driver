@@ -19,11 +19,18 @@
  * example of using replica sets from c++
  */
 
+// It is the responsibility of the mongo client consumer to ensure that any necessary windows
+// headers have already been included before including the driver facade headers.
+#if defined(_WIN32)
+#include <winsock2.h>
+#include <windows.h>
+#endif
+
+#include "mongo/client/dbclient.h"
+
 #include <iostream>
 #include <vector>
 #include <boost/thread/thread.hpp>
-
-#include "mongo/client/dbclient.h"
 
 using namespace mongo;
 using namespace std;
@@ -79,8 +86,15 @@ int main( int argc , const char ** argv ) {
             
     }
 
+    mongo::client::GlobalInstance instance;
+    if (!instance.initialized()) {
+        std::cout << "failed to initialize the client driver: " << instance.status() << endl;
+        return EXIT_FAILURE;
+    }
+
     string errmsg;
-    ConnectionString cs = ConnectionString::parse( "foo/127.0.0.1" , errmsg );
+    ConnectionString cs = ConnectionString::parse( "mongodb://127.0.0.1/?replicaSet=foo" , errmsg );
+
     if ( ! cs.isValid() ) {
         cout << "error parsing url: " << errmsg << endl;
         return EXIT_FAILURE;
@@ -122,4 +136,5 @@ int main( int argc , const char ** argv ) {
         threads[i]->join();
     }
 
+    return EXIT_SUCCESS;
 }
